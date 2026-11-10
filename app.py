@@ -1,6 +1,8 @@
 """Muschat: UI do chat em Streamlit."""
 
 import os
+from dataclasses import asdict
+from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -10,8 +12,9 @@ from streamlit.errors import StreamlitSecretNotFoundError
 
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
-from muschat.prompts import SISTEMA
-from muschat.reasoning import SemRetriever, responder
+from muschat.rag.busca import abrir_retriever
+from muschat.rag.indice import GeminiEmbedder
+from muschat.reasoning import responder
 
 load_dotenv()  # .env opcional; não sobrescreve variáveis já definidas
 
@@ -45,14 +48,17 @@ def _cliente(api_key: str) -> genai.Client:
     return genai.Client(api_key=api_key, http_options=types.HttpOptions(retry_options=retry))
 
 
-# shortcut: histórico cresce sem limite (cada turno grava o prompt de síntese inteiro, com
-# análise e trechos) e vai de novo na análise; resumir/janelar se estourar tokens
+@st.cache_resource
+def _retriever(api_key: str, embed_model: str):
+    embedder = GeminiEmbedder(_cliente(api_key).models, embed_model)
+    return abrir_retriever(Path("index"), embedder, embed_model)
+
+
+# shortcut: histórico (só perguntas e respostas) cresce sem limite e vai inteiro na análise;
+# resumir/janelar as mensagens antigas se conversas longas estourarem tokens
 def _novo_chat():
-    return _cliente(cfg.api_key).chats.create(
-        model=cfg.model,
-        # o chat só faz a síntese; a análise é uma chamada atômica à parte
-        config=types.GenerateContentConfig(system_instruction=SISTEMA, temperature=0.5),
-    )
+    # sem config aqui: cada síntese passa a sua (SISTEMA + contexto do turno) em reasoning.responder
+    return _cliente(cfg.api_key).chats.create(model=cfg.model)
 
 
 def _nova_conversa():
@@ -64,12 +70,22 @@ if "chat" not in st.session_state:
     _nova_conversa()
 
 st.sidebar.button("Nova conversa", on_click=_nova_conversa, width="stretch")
+retriever, aviso_indice = _retriever(cfg.api_key, cfg.embed_model)
+if aviso_indice:
+    _retriever.clear()  # não cacheia a falha: após a ingestão, o próximo rerun já acha o índice
+    st.sidebar.caption(f"⚠️ {aviso_indice} Respostas sem base no acervo.")
+
 
 def _render(msg: dict):
     st.markdown(msg["content"])
     if analise := msg.get("analise"):
-        with st.expander("Raciocínio (análise interna)"):
+        with st.expander("Raciocínio (análise interna e trechos do acervo)"):
             st.json(analise)
+            trechos = msg.get("trechos") or []
+            st.markdown(f"**Trechos recuperados:** {len(trechos) or 'nenhum'}")
+            for t in trechos:
+                st.markdown(f"**{t['fonte']}** — {t['local']}  \n`score {t['score']} ·{' + '.join(t['origem'])}`")
+                st.caption(t["texto"][:400] + ("…" if len(t["texto"]) > 400 else ""))
 
 
 for msg in st.session_state.messages:
@@ -86,7 +102,7 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                     pergunta,
                     gerador=_cliente(cfg.api_key).models,
                     chat=st.session_state.chat,
-                    retriever=SemRetriever(),
+                    retriever=retriever,
                     modelo=cfg.model,
                 )
         except Exception as exc:
@@ -97,6 +113,11 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
             if not resposta.final:  # bloqueio de segurança ou resposta vazia
                 st.warning("O modelo não devolveu texto para essa pergunta. Tente reformular.")
                 st.stop()
-            msg = {"role": "assistant", "content": resposta.final, "analise": resposta.analise}
+            msg = {
+                "role": "assistant",
+                "content": resposta.final,
+                "analise": resposta.analise,
+                "trechos": [asdict(t) for t in resposta.trechos],
+            }
             _render(msg)
             st.session_state.messages += [{"role": "user", "content": pergunta}, msg]

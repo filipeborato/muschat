@@ -1,6 +1,7 @@
 """Orquestração de um turno: análise (CoT) -> recuperação -> síntese."""
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -22,7 +23,10 @@ class Analise(BaseModel):
 class Trecho:
     texto: str
     fonte: str
-    pagina: int | None = None
+    local: str = ""  # "p. 12" | "m.7–9" | trilha de cabeçalhos | rótulo do exemplo
+    id: str = ""
+    score: float = 0.0
+    origem: tuple[str, ...] = ()  # densa | lexica | obra
 
 
 @dataclass(frozen=True)
@@ -40,17 +44,18 @@ class Gerador(Protocol):
 
 class SessaoChat(Protocol):
     def get_history(self) -> list: ...
-    def send_message(self, message: str) -> Any: ...
+    def send_message(self, message: str, config: Any = None) -> Any: ...
 
 
 class Retriever(Protocol):
-    def buscar(self, consultas: list[str], k: int) -> list[Trecho]: ...
+    def buscar(self, consultas: list[str], k: int, instrumentos: Sequence[str] = ()) -> list[Trecho]: ...
 
 
-# shortcut: sem RAG ainda, devolve []; trocar pelo Retriever do índice (ticket 04)
 class SemRetriever:
+    """Retriever nulo: usado quando não há índice utilizável (a síntese declara conhecimento geral)."""
 
-    def buscar(self, consultas: list[str], k: int) -> list[Trecho]:
+
+    def buscar(self, consultas: list[str], k: int, instrumentos: Sequence[str] = ()) -> list[Trecho]:
         return []
 
 
@@ -70,9 +75,11 @@ def _neutralizar(texto: str) -> str:
 #      (escopo -> instrumentos/técnicas -> plano Least-to-Most -> consultas)
 #      e devolve JSON validado por schema. JSON inválido -> fallback seguro.
 #   2. ESCOPO: fora do domínio -> recusa padrão, sem gastar as etapas 3-4.
-#   3. RECUPERAÇÃO: as consultas da análise buscam trechos no acervo.
-#   4. SÍNTESE: `chat.send_message` (memória nativa) condicionada na análise e
-#      nos trechos, tudo delimitado por tags tratadas como dado, nunca instrução.
+#   3. RECUPERAÇÃO: as consultas da análise (multilíngues) buscam no acervo por
+#      busca híbrida densa + BM25 (RRF), com boost pela família dos instrumentos.
+#   4. SÍNTESE: `chat.send_message(pergunta)` (memória nativa); análise e trechos
+#      entram no system_instruction do turno, delimitados por tags tratadas como
+#      dado, e não são gravados no histórico (que guarda só pergunta e resposta).
 # =============================================================================
 def responder(
     pergunta: str,
@@ -89,14 +96,16 @@ def responder(
     if not analise.no_escopo:
         return Resposta(prompts.RECUSA, analise.model_dump(), [], fora_do_escopo=True)
 
-    trechos = retriever.buscar(analise.consultas, k)
+    trechos = retriever.buscar(analise.consultas, k, analise.instrumentos)
 
+    # análise e trechos vão no system_instruction do turno: o histórico guarda só pergunta/resposta
+    contexto = prompts.CONTEXTO_DO_TURNO.format(
+        analise=_neutralizar(analise.model_dump_json(indent=2)),
+        trechos="\n\n".join(_formatar(t) for t in trechos) or "nenhum",
+    )
     resposta = chat.send_message(
-        prompts.SINTESE.format(
-            pergunta=pergunta_segura,
-            analise=_neutralizar(analise.model_dump_json(indent=2)),
-            trechos="\n\n".join(_formatar(t) for t in trechos) or "nenhum",
-        )
+        pergunta_segura,
+        config=types.GenerateContentConfig(system_instruction=prompts.SISTEMA + contexto, temperature=0.5),
     )
     return Resposta(resposta.text or "", analise.model_dump(), trechos, fora_do_escopo=False)
 
@@ -127,6 +136,6 @@ def _analisar(pergunta: str, *, gerador: Gerador, chat: SessaoChat, modelo: str)
 def _formatar(t: Trecho) -> str:
     return prompts.TRECHO.format(
         fonte=_neutralizar(t.fonte).replace('"', "'"),
-        pagina=t.pagina if t.pagina is not None else "?",
+        local=_neutralizar(t.local).replace('"', "'") or "?",
         texto=_neutralizar(t.texto),
     )

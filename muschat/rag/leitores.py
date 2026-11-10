@@ -50,11 +50,12 @@ def ler(arquivo: Path, raiz: Path) -> list[Chunk]:
         return []
     relativo = arquivo.relative_to(raiz)
     rel = relativo.as_posix()
-    pasta = _familia(*relativo.parent.parts)
+    pasta = familia_de(*relativo.parent.parts)
     return [Chunk(id=f"{rel}#{i}", arquivo=rel, **campos) for i, campos in enumerate(funcao(arquivo, pasta))]
 
 
-def _familia(*textos: str) -> str:
+def familia_de(*textos: str) -> str:
+    """Família instrumental (cordas, sopros, ...) por palavra-chave; "" se nenhuma."""
     alvo = " ".join(textos).lower()
     for familia, chaves in FAMILIAS.items():
         if any(chave in alvo for chave in chaves):
@@ -63,7 +64,7 @@ def _familia(*textos: str) -> str:
 
 
 def _familia_de_partes(nomes: list[str], padrao: str) -> str:
-    familias = {f for f in (_familia(n) for n in nomes) if f}
+    familias = {f for f in (familia_de(n) for n in nomes) if f}
     if len(familias) == 1:
         return familias.pop()
     return "misto" if familias else padrao
@@ -113,7 +114,7 @@ def _ler_md(arq: Path, pasta: str) -> Iterator[dict[str, Any]]:
         if not texto:
             continue
         local = " > ".join(caminho)
-        familia = pasta or next((f for t in reversed(caminho) if (f := _familia(t))), "")
+        familia = pasta or next((f for t in reversed(caminho) if (f := familia_de(t))), "")
         for pedaco in _quebrar_secao(texto):
             yield dict(texto=pedaco, fonte=fonte, local=local, tipo=tipo, familia=familia, obra=obra)
 
@@ -208,7 +209,7 @@ def _fichas_partitura(raiz, partes, titulo, pasta, obra) -> Iterator[dict[str, A
 
     for inicio in range(0, max(total - 1, 1), PASSO_FICHA):
         linhas = [
-            f"{nome} m.{c.get('number')}: {desc}"
+            f"{nome}, compasso {c.get('number')}: {desc}"
             for nome, compassos in partes
             for c in compassos[inicio : inicio + COMPASSOS_POR_FICHA]
             if (desc := _descrever(c))
@@ -231,8 +232,8 @@ def _exemplos_numerados(partes, titulo, pasta, obra) -> Iterator[dict[str, Any]]
             if compasso.find("attributes") is None and atributos is not None:
                 compasso.insert(0, copy.deepcopy(atributos))
             exemplos.append((int(rotulo.split(".")[0]), dict(
-                texto=f"{titulo} — {rotulo}\n{nome} m.{c.get('number')}: {_descrever(c)}",
-                fonte=titulo, local=rotulo, tipo="exemplo_notado", familia=_familia(nome) or pasta, obra=obra,
+                texto=f"{titulo} — {rotulo}\n{nome}, compasso {c.get('number')}: {_descrever(c)}",
+                fonte=titulo, local=rotulo, tipo="exemplo_notado", familia=familia_de(nome) or pasta, obra=obra,
                 extra={"parte": nome, "musicxml": ET.tostring(compasso, encoding="unicode")},
             )))
     yield from (campos for _, campos in sorted(exemplos, key=lambda e: e[0]))

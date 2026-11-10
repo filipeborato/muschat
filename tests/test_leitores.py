@@ -170,8 +170,8 @@ def test_musicxml_gera_ficha_da_obra_e_fichas_de_compasso(tmp_path):
 
     por_local = {c.local: c.texto for c in chunks[1:]}
     assert list(por_local) == ["m.1–3", "m.3–5", "m.5–7"]
-    assert "Violoncello m.2: sul pont. estr.; notehead diamond" in por_local["m.1–3"]
-    assert "Violino I m.7: scratch; notehead x; tremolo; ff" in por_local["m.5–7"]
+    assert "Violoncello, compasso 2: sul pont. estr.; notehead diamond" in por_local["m.1–3"]
+    assert "Violino I, compasso 7: scratch; notehead x; tremolo; ff" in por_local["m.5–7"]
     assert "scratch" not in por_local["m.1–3"]
 
 
@@ -198,7 +198,7 @@ def test_dicionario_numerado_gera_um_exemplo_por_tecnica(tmp_path):
     ]
     clb = chunks[1]
     assert clb.tipo == "exemplo_notado"
-    assert "Violino m.2" in clb.texto and "notehead x" in clb.texto
+    assert "Violino, compasso 2" in clb.texto and "notehead x" in clb.texto
     assert clb.extra["parte"] == "Violino"
     assert '<measure number="2">' in clb.extra["musicxml"]
     assert "<divisions>1</divisions>" in clb.extra["musicxml"]  # atributos herdados p/ renderizar
@@ -225,4 +225,4 @@ def test_janelas_seguem_a_parte_mais_longa(tmp_path):
     longa[4] = _compasso(5, _palavra("scratch") + _nota())
     chunks = ler(_escrever(tmp_path, "p.musicxml", _partitura("P", {"Flauto": curta, "Viola": longa})), tmp_path)
     assert [c.local for c in chunks[1:]] == ["m.1–3", "m.3–5"]
-    assert "Viola m.5: scratch" in chunks[-1].texto
+    assert "Viola, compasso 5: scratch" in chunks[-1].texto
