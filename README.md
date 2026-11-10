@@ -13,13 +13,32 @@ Built with [Streamlit](https://streamlit.io) and Google Gemini (`google-genai`).
 | Chat UI with conversation memory (follow-ups like "and on the cello?") | ✅ |
 | Restricted scope (off-topic questions are declined) | ✅ |
 | Friendly errors: missing/invalid key, rate limit (429), server and network failures | ✅ |
-| Automatic retry with backoff on transient API errors | ✅ |
+| Automatic retry with backoff on transient API errors, and a timeout on every request | ✅ |
 | "Nova conversa" button to reset the screen and the model's context | ✅ |
-| Chain-of-Thought: hidden analysis step (scope, plan, search queries) shown in a collapsible panel | ✅ |
+| Chain-of-Thought: hidden analysis step (scope, plan, multilingual search queries) | ✅ |
 | Hybrid RAG (Gemini embeddings + BM25, RRF) over a local corpus, with `[source, location]` citations | ✅ |
+| Reasoning panel under each answer: the analysis plus every retrieved passage (source, location, score, dense/lexical) | ✅ |
+| Authorship from the corpus metadata: works and examples are never credited to another composer | ✅ |
 | Sheet music: real excerpts from the corpus, or an illustrative example generated on demand (JSON → MusicXML → Verovio SVG, offline) with `.musicxml` download | ✅ |
+| Prompt-injection defence: user text, analysis and corpus passages are delimited and treated as data | ✅ |
 
 The UI is in Portuguese.
+
+## How it works
+
+Each question goes through a short chain, all in `muschat/reasoning.py`:
+
+1. **Analysis**: a separate, hidden Gemini call returns schema-validated JSON: in/out of scope,
+   instruments, techniques, a step-by-step plan, search queries (Italian term + score abbreviation +
+   Portuguese term) and whether notation is needed. Off-topic questions stop here, costing one call.
+2. **Retrieval**: each query runs a dense search (Gemini embeddings) and a lexical BM25 search
+   (which catches abbreviations such as `s.p.e.` or `c.l.t.`), merged with reciprocal rank fusion and
+   boosted for the instrument family. Bar cards bring their work card along.
+3. **Notation (only when asked)**: real MusicXML from the retrieved passages, or a short example the model
+   writes as JSON, which a deterministic builder turns into MusicXML (grimório techniques: `x`/diamond
+   noteheads, Italian indications, quarter tones, tremolo, glissando). Verovio renders it to SVG locally.
+4. **Answer**: the chat receives only the question; the analysis, passages and score list go into that
+   turn's system instruction, so the conversation history stays small (questions and answers only).
 
 ## Quick start
 
@@ -44,6 +63,10 @@ GEMINI_MODEL=gemini-3.1-flash-lite          # optional, this is the default
 GEMINI_EMBED_MODEL=gemini-embedding-2      # optional, this is the default
 ```
 
+The default embedding model is now `gemini-embedding-2` (previously `gemini-embedding-001`). It has its own
+free-tier quota and gives one vector per passage. An index is tied to the model that built it: after changing
+`GEMINI_EMBED_MODEL`, re-run the ingestion (the app warns in the sidebar if the index and the model differ).
+
 The key can also come from an exported environment variable or from `.streamlit/secrets.toml` (`GEMINI_API_KEY = "your-key"`). Never commit any of these files; they are gitignored.
 
 ## Corpus
@@ -58,8 +81,12 @@ compositor = "Your Name"
 ```
 
 Re-run `uv run python -m muschat.rag.ingest` whenever the corpus changes. On the free tier, embeddings are
-rate-limited; the ingestion waits out the per-minute limit and stops with a clear message if the daily quota
-is exhausted (switch `GEMINI_EMBED_MODEL` or try later).
+rate-limited; the ingestion waits out the per-minute limit (and says so on screen) and stops with a clear
+message if the daily quota is exhausted (switch `GEMINI_EMBED_MODEL` or try later). The previous index is kept.
+
+Notation is rendered offline: the project never fetches scores or images from the internet, and published
+scores are never reproduced. Asking for "a score by composer X" who is not in the corpus gets an explanation,
+not someone else's music.
 
 ## Try it
 
@@ -73,7 +100,21 @@ Paste these into the chat to exercise the current features:
    from the corpus, with its author in the caption.
 6. **Generated notation**: `Escreva 4 compassos para violino alternando sul ponticello e col legno battuto.`
    shows an illustrative score (clearly labelled as generated) and a `.musicxml` download.
-7. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
+7. **A bar of a work in the corpus**: `O que acontece no compasso 8 do Quarteto delle Pressioni?` (if that
+   score is in your corpus) cites `[Quarteto delle Pressioni, m.7–9]` and shows those real bars.
+8. **No misattribution**: `Me dê um exemplo de partitura da Nina Šenk.` explains there is no published score
+   to show and credits nothing from the corpus to her.
+9. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
+
+## Troubleshooting
+
+| You see | Do |
+|---|---|
+| Sidebar: "Sem índice do acervo" | Add material to `corpus/` and run the ingestion |
+| Sidebar: index built with another model / old version | Re-run `uv run python -m muschat.rag.ingest` |
+| Ingestion: "Cota de embeddings ... esgotada" | Daily free-tier quota: try later or set another `GEMINI_EMBED_MODEL` |
+| Chat: "Limite de requisições" | Per-minute limit of the chat model: wait a minute |
+| A score shows as XML text instead of notation | Verovio could not read that MusicXML; the download still works |
 
 ## Tests
 
