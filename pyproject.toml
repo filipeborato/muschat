@@ -1,0 +1,17 @@
+[project]
+name = "muschat"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "google-genai>=3.0.0",
+    "streamlit>=1.67.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+filterwarnings = ["ignore::SyntaxWarning"]
