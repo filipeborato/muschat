@@ -226,3 +226,57 @@ def test_janelas_seguem_a_parte_mais_longa(tmp_path):
     chunks = ler(_escrever(tmp_path, "p.musicxml", _partitura("P", {"Flauto": curta, "Viola": longa})), tmp_path)
     assert [c.local for c in chunks[1:]] == ["m.1–3", "m.3–5"]
     assert "Viola, compasso 5: scratch" in chunks[-1].texto
+
+
+def _doc(chunk):
+    import xml.etree.ElementTree as ET
+
+    return ET.fromstring(chunk.extra["musicxml"])
+
+
+def test_ficha_de_compasso_leva_documento_musicxml_autonomo(tmp_path):
+    vn = [_compasso(1, _nota(), ATTR)] + [_compasso(n, _nota()) for n in range(2, 6)]
+    vc = [_compasso(1, _nota("G", 3), ATTR)] + [_compasso(n, _nota("G", 3)) for n in range(2, 6)]
+    chunks = ler(_escrever(tmp_path, "q.musicxml", _partitura("Q", {"Violino I": vn, "Violoncello": vc})), tmp_path)
+    ficha = next(c for c in chunks if c.local == "m.3–5")
+    doc = _doc(ficha)
+    assert doc.tag == "score-partwise"
+    assert [p.findtext("part-name") for p in doc.iter("score-part")] == ["Violino I", "Violoncello"]
+    for parte in doc.findall("part"):
+        assert [m.get("number") for m in parte.findall("measure")] == ["3", "4", "5"]
+        assert parte.find("measure/attributes/divisions") is not None  # atributos herdados do compasso 1
+    assert "musicxml" not in chunks[0].extra  # a ficha da obra não tem trecho para desenhar
+
+
+def test_exemplo_numerado_leva_documento_autonomo_da_parte(tmp_path):
+    vn = [_compasso(1, _palavra("1. a") + _nota(), ATTR), _compasso(2, _palavra("2. b") + _nota()),
+          _compasso(3, _palavra("3. c") + _nota())]
+    chunks = ler(_escrever(tmp_path, "s.musicxml", _partitura("Dizionario", {"Violino": vn})), tmp_path)
+    doc = _doc(chunks[1])
+    assert [p.findtext("part-name") for p in doc.iter("score-part")] == ["Violino"]
+    assert [m.get("number") for m in doc.iter("measure")] == ["2"]
+
+
+def test_compositor_vem_do_acervo_toml_mais_proximo(tmp_path):
+    _escrever(tmp_path, "obras/_acervo.toml", 'compositor = "Filipe Borato"\n')
+    _escrever(tmp_path, "_acervo.toml", 'compositor = "Outro"\n')
+    proprio = ler(_escrever(tmp_path, "obras/estudo.md", "# Estudo\n\nx"), tmp_path)
+    outro = ler(_escrever(tmp_path, "livros/notas.md", "# Notas\n\ny"), tmp_path)
+    assert proprio[0].compositor == "Filipe Borato"
+    assert outro[0].compositor == "Outro"
+    assert "Filipe Borato" in proprio[0].texto_embutido.splitlines()[0]
+
+
+def test_sem_acervo_toml_compositor_fica_vazio(tmp_path):
+    assert ler(_escrever(tmp_path, "notas.md", "# N\n\nx"), tmp_path)[0].compositor == ""
+
+
+def test_ficha_completa_atributos_parciais_do_primeiro_compasso(tmp_path):
+    so_clave = "<attributes><clef><sign>F</sign><line>4</line></clef></attributes>"
+    vn = [_compasso(1, _nota(), ATTR), _compasso(2, _nota()), _compasso(3, _nota(), so_clave),
+          _compasso(4, _nota()), _compasso(5, _nota())]
+    chunks = ler(_escrever(tmp_path, "q.musicxml", _partitura("Q", {"Violino": vn})), tmp_path)
+    attrs = _doc(next(c for c in chunks if c.local == "m.3–5")).find("part/measure/attributes")
+    assert attrs is not None
+    assert attrs.findtext("divisions") == "1"  # herdado
+    assert attrs.findtext("clef/sign") == "F"  # a mudança local vence

@@ -2,6 +2,7 @@
 
 import copy
 import re
+import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,7 @@ MAX_SECAO = 2000
 JANELA, SOBREPOSICAO = 1000, 200
 COMPASSOS_POR_FICHA, PASSO_FICHA = 3, 2
 MIN_ROTULOS_DICIONARIO = 3
+METADADOS = "_acervo.toml"  # por pasta: compositor = "..." (vale para a pasta e subpastas)
 
 FAMILIAS = {
     "cordas": ("cordas", "archi", "violin", "viola", "violoncel", "contrabbass", "contrabaixo", "arpa"),
@@ -35,12 +37,13 @@ class Chunk:
     tipo: str  # texto | analise_obra | livro | partitura | exemplo_notado
     familia: str = ""
     obra: str | None = None
-    extra: dict = field(default_factory=dict)
+    compositor: str = ""
+    extra: dict = field(default_factory=dict)  # "musicxml": documento autônomo p/ renderizar o trecho
 
     @property
     def texto_embutido(self) -> str:
         """Cabeçalho de contexto determinístico + texto (o que vai para o embedding)."""
-        cabecalho = " | ".join(p for p in (self.fonte, self.local, self.familia) if p)
+        cabecalho = " | ".join(p for p in (self.fonte, self.local, self.familia, self.compositor) if p)
         return f"{cabecalho}\n{self.texto}"
 
 
@@ -51,7 +54,22 @@ def ler(arquivo: Path, raiz: Path) -> list[Chunk]:
     relativo = arquivo.relative_to(raiz)
     rel = relativo.as_posix()
     pasta = familia_de(*relativo.parent.parts)
-    return [Chunk(id=f"{rel}#{i}", arquivo=rel, **campos) for i, campos in enumerate(funcao(arquivo, pasta))]
+    compositor = _compositor(arquivo.parent, raiz)
+    return [
+        Chunk(id=f"{rel}#{i}", arquivo=rel, compositor=compositor, **campos)
+        for i, campos in enumerate(funcao(arquivo, pasta))
+    ]
+
+
+def _compositor(pasta: Path, raiz: Path) -> str:
+    """Autor declarado no _acervo.toml mais próximo (da pasta do arquivo até a raiz do corpus)."""
+    for atual in (pasta, *pasta.parents):
+        meta = atual / METADADOS
+        if meta.exists():
+            return str(tomllib.loads(meta.read_text(encoding="utf-8")).get("compositor", "")).strip()
+        if atual == raiz:
+            break
+    return ""
 
 
 def familia_de(*textos: str) -> str:
@@ -217,26 +235,57 @@ def _fichas_partitura(raiz, partes, titulo, pasta, obra) -> Iterator[dict[str, A
         janela = max((ms for _, ms in partes), key=len)[inicio : inicio + COMPASSOS_POR_FICHA]
         if linhas and janela:
             local = f"m.{janela[0].get('number')}–{janela[-1].get('number')}"
-            yield dict(texto="\n".join(linhas), local=local, **base)
+            trecho = [(nome, compassos[inicio : inicio + COMPASSOS_POR_FICHA], compassos) for nome, compassos in partes]
+            yield dict(texto="\n".join(linhas), local=local, extra={"musicxml": _documento(titulo, trecho)}, **base)
 
 
 def _exemplos_numerados(partes, titulo, pasta, obra) -> Iterator[dict[str, Any]]:
     exemplos = []
     for nome, compassos in partes:
-        atributos = next((c.find("attributes") for c in compassos if c.find("attributes") is not None), None)
         for c in compassos:
             rotulo = next((w.text.strip() for w in c.iter("words") if _ROTULO.match(w.text or "")), None)
             if rotulo is None:
                 continue
-            compasso = copy.deepcopy(c)
-            if compasso.find("attributes") is None and atributos is not None:
-                compasso.insert(0, copy.deepcopy(atributos))
             exemplos.append((int(rotulo.split(".")[0]), dict(
                 texto=f"{titulo} — {rotulo}\n{nome}, compasso {c.get('number')}: {_descrever(c)}",
                 fonte=titulo, local=rotulo, tipo="exemplo_notado", familia=familia_de(nome) or pasta, obra=obra,
-                extra={"parte": nome, "musicxml": ET.tostring(compasso, encoding="unicode")},
+                extra={"parte": nome, "musicxml": _documento(f"{titulo} — {rotulo}", [(nome, [c], compassos)])},
             )))
     yield from (campos for _, campos in sorted(exemplos, key=lambda e: e[0]))
+
+
+def _documento(titulo: str, partes: list[tuple[str, list[ET.Element], list[ET.Element]]]) -> str:
+    """score-partwise autônomo com só os compassos pedidos de cada parte (nome, trecho, parte inteira)."""
+    raiz = ET.Element("score-partwise", version="4.0")
+    ET.SubElement(ET.SubElement(raiz, "work"), "work-title").text = titulo
+    lista = ET.SubElement(raiz, "part-list")
+    for i, (nome, trecho, inteira) in enumerate(partes, 1):
+        ET.SubElement(ET.SubElement(lista, "score-part", id=f"P{i}"), "part-name").text = nome
+        parte = ET.SubElement(raiz, "part", id=f"P{i}")
+        for n, compasso in enumerate(trecho):
+            copia = copy.deepcopy(compasso)
+            if n == 0:
+                _herdar_atributos(copia, inteira)
+            parte.append(copia)
+    return ET.tostring(raiz, encoding="unicode")
+
+
+def _herdar_atributos(compasso: ET.Element, parte: list[ET.Element]) -> None:
+    """Completa o 1º compasso do trecho com divisions/key/time/clef da parte (o que ele já tiver vence)."""
+    # shortcut: herda dos primeiros atributos da parte; uma mudança de clave/métrica no meio da peça,
+    # antes do trecho, não é aplicada (acumular os <attributes> até o trecho se isso aparecer)
+    base = next((c.find("attributes") for c in parte if c.find("attributes") is not None), None)
+    if base is None:
+        return
+    proprios = compasso.find("attributes")
+    if proprios is None:
+        compasso.insert(0, copy.deepcopy(base))
+        return
+    ordem = ["divisions", "key", "time", "staves", "clef"]
+    for tag in ordem:
+        if proprios.find(tag) is None and (herdado := base.find(tag)) is not None:
+            proprios.append(copy.deepcopy(herdado))
+    proprios[:] = sorted(proprios, key=lambda e: ordem.index(e.tag) if e.tag in ordem else len(ordem))
 
 
 _LEITORES = {".md": _ler_md, ".pdf": _ler_pdf, ".txt": _ler_txt, ".musicxml": _ler_musicxml}

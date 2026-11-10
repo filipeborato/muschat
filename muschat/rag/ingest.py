@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import os
 import sys
+import time
 import tomllib
 from collections import Counter
 from pathlib import Path
@@ -38,10 +39,18 @@ def ingerir(corpus: Path, pasta_indice: Path, embedder: Embedder, modelo: str) -
     return indice
 
 
+TIMEOUT_MS = 60_000
+
+
+def _aguardar_cota(segundos: float) -> None:
+    print(f"  cota de embeddings por minuto esgotada: aguardando {segundos:.0f}s...", flush=True)
+    time.sleep(segundos)
+
+
 def main() -> int:
     from dotenv import load_dotenv
     from google import genai
-    from google.genai import types
+    from google.genai import errors, types
 
     from muschat.config import ChaveAusente, carregar_config
     from muschat.rag.indice import GeminiEmbedder
@@ -64,10 +73,25 @@ def main() -> int:
 
     # 429 fica com o GeminiEmbedder (espera o retryDelay); o SDK só repete falhas transitórias
     transitorias = [408, 500, 502, 503, 504]
-    retry = types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=transitorias))
+    retry = types.HttpOptions(
+        timeout=TIMEOUT_MS,  # sem timeout uma conexão presa trava a ingestão indefinidamente
+        retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=transitorias),
+    )
     cliente = genai.Client(api_key=cfg.api_key, http_options=retry)
     try:
-        indice = ingerir(args.corpus, args.index, GeminiEmbedder(cliente.models, cfg.embed_model), cfg.embed_model)
+        embedder = GeminiEmbedder(cliente.models, cfg.embed_model, dormir=_aguardar_cota)
+        print(f"Indexando {args.corpus}/ com {cfg.embed_model}...", flush=True)
+        indice = ingerir(args.corpus, args.index, embedder, cfg.embed_model)
+    except errors.ClientError as exc:
+        if exc.code != 429:
+            raise
+        print(
+            f"Cota de embeddings do {cfg.embed_model} esgotada (provavelmente a diária do free tier). "
+            "Tente mais tarde ou use outro modelo em GEMINI_EMBED_MODEL (ex.: gemini-embedding-001). "
+            "O índice anterior foi mantido.",
+            file=sys.stderr,
+        )
+        return 1
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 1

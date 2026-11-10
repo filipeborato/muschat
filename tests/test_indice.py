@@ -115,3 +115,17 @@ def test_construir_rejeita_embedder_que_devolve_vetores_a_menos():
 
     with pytest.raises(ValueError, match="vetores"):
         construir([_chunk(0, "a"), _chunk(1, "b")], Curto())
+
+
+def test_cota_diaria_esgotada_falha_na_hora_sem_esperar_horas():
+    import pytest
+    from google.genai import errors
+
+    class CotaDiaria(FakeModels):
+        def embed_content(self, *, model, contents, config):
+            raise _erro_429("38197s")
+
+    esperas = []
+    with pytest.raises(errors.ClientError):
+        GeminiEmbedder(CotaDiaria(), "emb-x", dormir=esperas.append).embutir(["t"], "documento")
+    assert esperas == []

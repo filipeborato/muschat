@@ -25,6 +25,6 @@ def test_sem_chave_falha_com_erro_de_dominio(env):
 
 
 def test_modelo_de_embeddings_padrao_e_sobrescrevivel():
-    assert carregar_config({"GEMINI_API_KEY": "k"}, {}).embed_model == "gemini-embedding-001"
-    cfg = carregar_config({"GEMINI_API_KEY": "k"}, {"GEMINI_EMBED_MODEL": "gemini-embedding-2"})
-    assert cfg.embed_model == "gemini-embedding-2"
+    assert carregar_config({"GEMINI_API_KEY": "k"}, {}).embed_model == "gemini-embedding-2"
+    cfg = carregar_config({"GEMINI_API_KEY": "k"}, {"GEMINI_EMBED_MODEL": "gemini-embedding-001"})
+    assert cfg.embed_model == "gemini-embedding-001"

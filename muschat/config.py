@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 MODELO_PADRAO = "gemini-3.1-flash-lite"
-MODELO_EMBEDDINGS_PADRAO = "gemini-embedding-001"
+MODELO_EMBEDDINGS_PADRAO = "gemini-embedding-2"
 
 
 class ChaveAusente(Exception):

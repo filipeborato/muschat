@@ -1,6 +1,7 @@
 """Muschat: UI do chat em Streamlit."""
 
 import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
+from muschat.notacao.render import svg_de
 from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
 from muschat.reasoning import responder
@@ -45,7 +47,8 @@ except ChaveAusente:
 def _cliente(api_key: str) -> genai.Client:
     # retry nativo do SDK: backoff exponencial em 408/429/5xx
     retry = types.HttpRetryOptions(attempts=3)
-    return genai.Client(api_key=api_key, http_options=types.HttpOptions(retry_options=retry))
+    # timeout por requisição: sem ele uma conexão presa deixa o spinner girando para sempre
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=90_000, retry_options=retry))
 
 
 @st.cache_resource
@@ -76,21 +79,45 @@ if aviso_indice:
     st.sidebar.caption(f"⚠️ {aviso_indice} Respostas sem base no acervo.")
 
 
-def _render(msg: dict):
+@st.cache_data(max_entries=64, show_spinner=False)
+def _svg(musicxml: str) -> str | None:
+    return svg_de(musicxml)
+
+
+def _render_partituras(partituras: list[dict], chave: str):
+    for i, p in enumerate(partituras):
+        st.caption(p["legenda"])
+        if svg := _svg(p["musicxml"]):
+            st.image(svg, width="stretch")  # <img>: o SVG não executa script
+        else:
+            st.code(p["musicxml"], language="xml")
+        nome = re.sub(r"[^\w-]+", "_", p["titulo"]).strip("_")[:60] or "partitura"
+        st.download_button(
+            "baixar .musicxml",
+            data=p["musicxml"],
+            file_name=f"{nome}.musicxml",
+            mime="application/vnd.recordare.musicxml+xml",
+            key=f"dl-{chave}-{i}",
+            on_click="ignore",
+        )
+
+
+def _render(msg: dict, chave: str):
     st.markdown(msg["content"])
+    _render_partituras(msg.get("partituras") or [], chave)
     if analise := msg.get("analise"):
         with st.expander("Raciocínio (análise interna e trechos do acervo)"):
             st.json(analise)
             trechos = msg.get("trechos") or []
             st.markdown(f"**Trechos recuperados:** {len(trechos) or 'nenhum'}")
             for t in trechos:
-                st.markdown(f"**{t['fonte']}** — {t['local']}  \n`score {t['score']} ·{' + '.join(t['origem'])}`")
+                st.markdown(f"**{t['fonte']}** — {t['local']}  \n`score {t['score']} · {' + '.join(t['origem'])}`")
                 st.caption(t["texto"][:400] + ("…" if len(t["texto"]) > 400 else ""))
 
 
-for msg in st.session_state.messages:
+for n, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
-        _render(msg)
+        _render(msg, str(n))
 
 if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústica..."):
     with st.chat_message("user"):
@@ -117,7 +144,8 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                 "role": "assistant",
                 "content": resposta.final,
                 "analise": resposta.analise,
-                "trechos": [asdict(t) for t in resposta.trechos],
+                "trechos": [{k: v for k, v in asdict(t).items() if k != "musicxml"} for t in resposta.trechos],
+                "partituras": [asdict(p) for p in resposta.partituras],
             }
-            _render(msg)
+            _render(msg, str(len(st.session_state.messages) + 1))  # mesma chave que terá no histórico
             st.session_state.messages += [{"role": "user", "content": pergunta}, msg]

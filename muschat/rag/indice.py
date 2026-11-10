@@ -15,7 +15,9 @@ from muschat.rag.leitores import Chunk
 TipoTexto = Literal["documento", "consulta"]
 _TASK_TYPE = {"documento": "RETRIEVAL_DOCUMENT", "consulta": "RETRIEVAL_QUERY"}
 LOTE, DIMENSAO = 100, 768
+VERSAO = 2  # sobe quando o formato do chunk/cabeçalho muda: índices antigos pedem reingestão
 TENTATIVAS_COTA = 4
+ESPERA_MAXIMA_S = 90  # cota por minuto pede < 60s; acima disso é a cota diária
 _RETRY_DELAY = re.compile(r"retryDelay\W+(\d+(?:\.\d+)?)s")
 
 
@@ -32,7 +34,9 @@ class GeminiEmbedder:
         vetores: list[list[float]] = []
         for i in range(0, len(textos), LOTE):
             r = self._com_cota(lambda: self._models.embed_content(
-                model=self._modelo, contents=textos[i : i + LOTE], config=config
+                # um Content por texto: o gemini-embedding-2 junta uma lista de strings num vetor só
+                model=self._modelo, contents=[types.Content(parts=[types.Part(text=t)]) for t in textos[i : i + LOTE]],
+                config=config,
             ))
             vetores += [list(e.values) for e in r.embeddings]
         return vetores
@@ -46,7 +50,10 @@ class GeminiEmbedder:
                 if exc.code != 429:
                     raise
                 m = _RETRY_DELAY.search(str(exc.details))
-                self._dormir((float(m.group(1)) if m else 60.0) + 1)
+                atraso = float(m.group(1)) if m else 60.0
+                if atraso > ESPERA_MAXIMA_S:  # não é a cota por minuto: é a diária, esperar horas não faz sentido
+                    raise
+                self._dormir(atraso + 1)
         return chamada()
 
 
@@ -75,7 +82,9 @@ def salvar(indice: Indice, pasta: Path, manifest: dict) -> None:
     with open(pasta / "chunks.jsonl", "w", encoding="utf-8") as f:
         for c in indice.chunks:
             f.write(json.dumps(asdict(c), ensure_ascii=False) + "\n")
-    indice.manifest = manifest = {**manifest, "chunks": len(indice.chunks), "dimensao": int(indice.vetores.shape[1])}
+    indice.manifest = manifest = {
+        **manifest, "versao": VERSAO, "chunks": len(indice.chunks), "dimensao": int(indice.vetores.shape[1]),
+    }
     (pasta / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

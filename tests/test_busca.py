@@ -170,3 +170,18 @@ def test_abrir_retriever_com_indice_de_esquema_antigo_avisa_sem_quebrar(tmp_path
     jsonl.write_text(jsonl.read_text(encoding="utf-8").replace('"id"', '"campo_velho": 1, "id"'), encoding="utf-8")
     retriever, aviso = abrir_retriever(tmp_path, EmbedderFixo({}), "emb-x")
     assert isinstance(retriever, SemRetriever) and aviso is not None
+
+
+def test_abrir_retriever_recusa_indice_de_versao_antiga(tmp_path):
+    import json
+
+    from muschat.rag.busca import abrir_retriever
+    from muschat.rag.indice import salvar
+    from muschat.reasoning import SemRetriever
+
+    salvar(_indice([("a", [1, 0, 0, 0])]), tmp_path, {"modelo": "emb-x"})
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest.pop("versao")
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    retriever, aviso = abrir_retriever(tmp_path, EmbedderFixo({}), "emb-x")
+    assert isinstance(retriever, SemRetriever) and aviso is not None and "reingira" in aviso

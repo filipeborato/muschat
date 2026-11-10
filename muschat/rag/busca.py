@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from rank_bm25 import BM25Okapi
 
-from muschat.rag.indice import Embedder, Indice, carregar, normalizar
+from muschat.rag.indice import VERSAO, Embedder, Indice, carregar, normalizar
 from muschat.rag.leitores import Chunk, familia_de
 from muschat.reasoning import Retriever, SemRetriever, Trecho
 
@@ -97,7 +97,10 @@ class RetrieverHibrido:
 
 
 def _trecho(c: Chunk, score: float, origem: tuple[str, ...]) -> Trecho:
-    return Trecho(texto=c.texto, fonte=c.fonte, local=c.local, id=c.id, score=round(score, 4), origem=origem)
+    return Trecho(
+        texto=c.texto, fonte=c.fonte, local=c.local, id=c.id, score=round(score, 4), origem=origem,
+        compositor=c.compositor, musicxml=c.extra.get("musicxml", ""),
+    )
 
 
 def _agrupar(trechos: list[Trecho]) -> list[Trecho]:
@@ -113,6 +116,8 @@ def abrir_retriever(pasta: Path, embedder: Embedder, modelo: str) -> tuple[Retri
         return SemRetriever(), f"Índice ilegível ({exc}); rode `uv run python -m muschat.rag.ingest`."
     if indice is None:
         return SemRetriever(), "Sem índice do acervo: rode `uv run python -m muschat.rag.ingest`."
+    if indice.manifest.get("versao") != VERSAO:
+        return SemRetriever(), "Índice de uma versão antiga do Muschat: reingira com `uv run python -m muschat.rag.ingest`."
     if (feito_com := indice.manifest.get("modelo")) != modelo:
         return SemRetriever(), f"Índice feito com `{feito_com}`, mas o modelo atual é `{modelo}`: reingira."
     return RetrieverHibrido(indice, embedder), None

@@ -1,14 +1,17 @@
-"""Orquestração de um turno: análise (CoT) -> recuperação -> síntese."""
+"""Orquestração de um turno: análise (CoT) -> recuperação -> notação (sob demanda) -> síntese."""
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol
 
-from google.genai import types
+import httpx2
+from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
 from muschat import prompts
+from muschat.notacao.modelo import Partitura
+from muschat.notacao.musicxml import TECNICAS, para_musicxml
 
 
 class Analise(BaseModel):
@@ -17,6 +20,7 @@ class Analise(BaseModel):
     tecnicas: list[str]
     plano: str
     consultas: list[str]
+    notacao: Literal["nenhuma", "acervo", "gerar"] = "nenhuma"
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,18 @@ class Trecho:
     id: str = ""
     score: float = 0.0
     origem: tuple[str, ...] = ()  # densa | lexica | obra
+    compositor: str = ""
+    musicxml: str = ""  # documento autônomo quando o trecho é partitura do acervo
+
+
+@dataclass(frozen=True)
+class Exemplo:
+    """Partitura exibida abaixo da resposta: real do acervo ou ilustrativa gerada."""
+
+    titulo: str
+    musicxml: str
+    legenda: str
+    origem: Literal["acervo", "gerado"]
 
 
 @dataclass(frozen=True)
@@ -35,6 +51,12 @@ class Resposta:
     analise: dict
     trechos: list[Trecho]
     fora_do_escopo: bool
+    partituras: list[Exemplo] = field(default_factory=list)
+
+
+MAX_PARTITURAS_ACERVO = 2
+MAX_COMPASSOS_GERADOS = 8
+LEGENDA_GERADA = "Exemplo ilustrativo gerado — não é trecho de obra publicada"
 
 
 # Protocolos com o mesmo formato do SDK: client.models e o Chat entram direto, sem adaptador.
@@ -77,9 +99,12 @@ def _neutralizar(texto: str) -> str:
 #   2. ESCOPO: fora do domínio -> recusa padrão, sem gastar as etapas 3-4.
 #   3. RECUPERAÇÃO: as consultas da análise (multilíngues) buscam no acervo por
 #      busca híbrida densa + BM25 (RRF), com boost pela família dos instrumentos.
-#   4. SÍNTESE: `chat.send_message(pergunta)` (memória nativa); análise e trechos
-#      entram no system_instruction do turno, delimitados por tags tratadas como
-#      dado, e não são gravados no histórico (que guarda só pergunta e resposta).
+#   4. NOTAÇÃO (só se a análise pedir): partitura real do acervo (MusicXML dos
+#      trechos) ou, se não houver, uma ilustrativa gerada como JSON validado por
+#      schema e convertida em MusicXML por um builder determinístico.
+#   5. SÍNTESE: `chat.send_message(pergunta)` (memória nativa); análise, trechos e
+#      a lista de partituras entram no system_instruction do turno, delimitados por
+#      tags tratadas como dado, e não são gravados no histórico.
 # =============================================================================
 def responder(
     pergunta: str,
@@ -97,17 +122,67 @@ def responder(
         return Resposta(prompts.RECUSA, analise.model_dump(), [], fora_do_escopo=True)
 
     trechos = retriever.buscar(analise.consultas, k, analise.instrumentos)
+    partituras = _partituras(pergunta_segura, analise, trechos, gerador=gerador, chat=chat, modelo=modelo)
 
     # análise e trechos vão no system_instruction do turno: o histórico guarda só pergunta/resposta
     contexto = prompts.CONTEXTO_DO_TURNO.format(
         analise=_neutralizar(analise.model_dump_json(indent=2)),
         trechos="\n\n".join(_formatar(t) for t in trechos) or "nenhum",
+        partituras="\n".join(f"- {_neutralizar(p.legenda)}: {_neutralizar(p.titulo)}" for p in partituras) or "nenhuma",
     )
     resposta = chat.send_message(
         pergunta_segura,
         config=types.GenerateContentConfig(system_instruction=prompts.SISTEMA + contexto, temperature=0.5),
     )
-    return Resposta(resposta.text or "", analise.model_dump(), trechos, fora_do_escopo=False)
+    return Resposta(resposta.text or "", analise.model_dump(), trechos, False, partituras)
+
+
+def _partituras(
+    pergunta: str, analise: Analise, trechos: list[Trecho], *, gerador: Gerador, chat: SessaoChat, modelo: str
+) -> list[Exemplo]:
+    if analise.notacao == "nenhuma":
+        return []
+    if analise.notacao == "acervo":
+        com_partitura = sorted((t for t in trechos if t.musicxml), key=lambda t: -t.score)  # mais relevantes
+        reais = [
+            Exemplo(f"{t.fonte} — {t.local}", t.musicxml, _legenda_acervo(t), "acervo")
+            for t in com_partitura[:MAX_PARTITURAS_ACERVO]
+        ]
+        if reais:
+            return reais
+    gerada = _gerar_partitura(pergunta, analise, gerador=gerador, chat=chat, modelo=modelo)
+    return [gerada] if gerada else []
+
+
+def _legenda_acervo(t: Trecho) -> str:
+    return f"Do acervo: {t.fonte}, {t.local}" + (f" — {t.compositor}" if t.compositor else "")
+
+
+def _gerar_partitura(
+    pergunta: str, analise: Analise, *, gerador: Gerador, chat: SessaoChat, modelo: str
+) -> Exemplo | None:
+    pedido = types.Content(role="user", parts=[types.Part(text=(
+        f"<pergunta_usuario>\n{pergunta}\n</pergunta_usuario>\n"
+        f"<analise_interna>\n{_neutralizar(analise.model_dump_json())}\n</analise_interna>"
+    ))])
+    try:
+        resposta = gerador.generate_content(
+            model=modelo,
+            contents=[*chat.get_history(), pedido],
+            config=types.GenerateContentConfig(
+                system_instruction=prompts.NOTACAO.format(tecnicas=", ".join(TECNICAS)),
+                temperature=0.4,
+                response_mime_type="application/json",
+                response_schema=Partitura,
+            ),
+        )
+        partitura = Partitura.model_validate_json(resposta.text or "")
+    except (ValidationError, errors.APIError, httpx2.TransportError):
+        return None  # etapa opcional: sem partitura neste turno, a resposta em texto segue normalmente
+    partitura.compassos = partitura.compassos[:MAX_COMPASSOS_GERADOS]
+    if not partitura.compassos:
+        return None
+    return Exemplo(partitura.titulo, para_musicxml(partitura), LEGENDA_GERADA, "gerado")
 
 
 def _analisar(pergunta: str, *, gerador: Gerador, chat: SessaoChat, modelo: str) -> Analise:
@@ -135,7 +210,12 @@ def _analisar(pergunta: str, *, gerador: Gerador, chat: SessaoChat, modelo: str)
 
 def _formatar(t: Trecho) -> str:
     return prompts.TRECHO.format(
-        fonte=_neutralizar(t.fonte).replace('"', "'"),
-        local=_neutralizar(t.local).replace('"', "'") or "?",
+        fonte=_atributo(t.fonte),
+        local=_atributo(t.local) or "?",
+        autor=f' autor="{_atributo(t.compositor)}"' if t.compositor else "",
         texto=_neutralizar(t.texto),
     )
+
+
+def _atributo(valor: str) -> str:
+    return _neutralizar(valor).replace('"', "'")
