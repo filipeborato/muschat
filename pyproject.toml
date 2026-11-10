@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "google-genai>=3.0.0",
+    "httpx2>=2.16.0",
+    "python-dotenv>=1.2.4",
     "streamlit>=1.67.0",
 ]
 
@@ -14,4 +16,5 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# google-genai 3.0.0 tem "\/" inválido em docstrings de types.py (ruído do SDK, não nosso)
 filterwarnings = ["ignore::SyntaxWarning"]
