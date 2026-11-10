@@ -11,6 +11,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
 from muschat.prompts import SISTEMA
+from muschat.reasoning import SemRetriever, responder
 
 load_dotenv()  # .env opcional; não sobrescreve variáveis já definidas
 
@@ -44,11 +45,13 @@ def _cliente(api_key: str) -> genai.Client:
     return genai.Client(api_key=api_key, http_options=types.HttpOptions(retry_options=retry))
 
 
-# shortcut: histórico cresce sem limite e vai inteiro a cada turno; resumir/janelar se estourar tokens
+# shortcut: histórico cresce sem limite (cada turno grava o prompt de síntese inteiro, com
+# análise e trechos) e vai de novo na análise; resumir/janelar se estourar tokens
 def _novo_chat():
     return _cliente(cfg.api_key).chats.create(
         model=cfg.model,
-        config=types.GenerateContentConfig(system_instruction=SISTEMA),
+        # o chat só faz a síntese; a análise é uma chamada atômica à parte
+        config=types.GenerateContentConfig(system_instruction=SISTEMA, temperature=0.5),
     )
 
 
@@ -62,9 +65,16 @@ if "chat" not in st.session_state:
 
 st.sidebar.button("Nova conversa", on_click=_nova_conversa, width="stretch")
 
+def _render(msg: dict):
+    st.markdown(msg["content"])
+    if analise := msg.get("analise"):
+        with st.expander("Raciocínio (análise interna)"):
+            st.json(analise)
+
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        _render(msg)
 
 if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústica..."):
     with st.chat_message("user"):
@@ -72,17 +82,21 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
     with st.chat_message("assistant"):
         try:
             with st.spinner("Pensando..."):
-                resposta = st.session_state.chat.send_message(pergunta).text
+                resposta = responder(
+                    pergunta,
+                    gerador=_cliente(cfg.api_key).models,
+                    chat=st.session_state.chat,
+                    retriever=SemRetriever(),
+                    modelo=cfg.model,
+                )
         except Exception as exc:
-            if (msg := mensagem_de_erro(exc)) is None:
+            if (erro := mensagem_de_erro(exc)) is None:
                 raise
-            st.error(msg)  # histórico intacto: o turno com falha não é gravado
+            st.error(erro)  # histórico intacto: o turno com falha não é gravado
         else:
-            if not resposta:  # bloqueio de segurança ou resposta vazia
+            if not resposta.final:  # bloqueio de segurança ou resposta vazia
                 st.warning("O modelo não devolveu texto para essa pergunta. Tente reformular.")
                 st.stop()
-            st.markdown(resposta)
-            st.session_state.messages += [
-                {"role": "user", "content": pergunta},
-                {"role": "assistant", "content": resposta},
-            ]
+            msg = {"role": "assistant", "content": resposta.final, "analise": resposta.analise}
+            _render(msg)
+            st.session_state.messages += [{"role": "user", "content": pergunta}, msg]
