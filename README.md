@@ -38,6 +38,12 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
    writes as JSON, converted to MusicIR (the internal score model: midicents, exact fractions, per-event
    provenance) and then by a deterministic builder into MusicXML (grimório techniques: `x`/diamond
    noteheads, Italian indications, quarter tones, tremolo, glissando). Verovio renders it to SVG locally.
+   **Composition requests** ("crie oito compassos para quarteto...", "agora só o violoncelo") take a different
+   path (`muschat/orquestrador.py`): one more Gemini call returns a typed composition plan that may only name
+   procedures from the Python catalog (`muschat/procedimentos.py`) with parameters inside their ranges, plus a
+   selection (parts, voices, bars). Invalid plans are refused before anything runs; the model never writes code.
+   The procedure runs on MusicIR with a seed, and the orchestrator rejects the result if anything outside the
+   selection changed. The result becomes a new version of the session composition.
 4. **Answer**: the chat receives only the question; the analysis, passages and score list go into that
    turn's system instruction, so the conversation history stays small (questions and answers only).
 
@@ -105,7 +111,11 @@ Paste these into the chat to exercise the current features:
    score is in your corpus) cites `[Quarteto delle Pressioni, m.7–9]` and shows those real bars.
 8. **No misattribution**: `Me dê um exemplo de partitura da Nina Šenk.` explains there is no published score
    to show and credits nothing from the corpus to her.
-9. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
+9. **Composition**: `Crie oito compassos para quarteto de cordas utilizando uma sequência derivada de parciais
+   harmônicos.` shows a four-part score (version 1 in the sidebar's **Composição** section, with its MusicXML
+   download). Then `Aplique um processo às durações do violoncelo, preservando os outros instrumentos.` creates
+   version 2; comparing 1 → 2 in the sidebar lists changes only in the cello part. **Desfazer** goes back to 1.
+10. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
 
 ## Troubleshooting
 
@@ -139,6 +149,10 @@ muschat/rag/indice.py     Gemini embeddings and the local numpy index
 muschat/rag/busca.py      hybrid search (dense + BM25, RRF) and context assembly
 muschat/rag/ingest.py     `python -m muschat.rag.ingest`
 muschat/musicir.py        MusicIR: parts, voices, typed events, provenance, structural diff
+muschat/plano.py          composition plan schema (operations, parameters, selection)
+muschat/procedimentos.py  Python procedure catalog (harmonic series, duration permutation)
+muschat/orquestrador.py   composition turn: plan -> catalog checks -> procedure -> preservation check -> version
+muschat/composicao.py     session composition: versions, undo, go back, compare
 muschat/notacao/          example schema -> MusicIR, technique table, MusicXML builder, Verovio renderer
 tests/                    pytest suite
 ```

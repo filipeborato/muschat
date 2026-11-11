@@ -2,6 +2,7 @@
 
 import os
 import re
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from google import genai
 from google.genai import types
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from muschat.composicao import Composicao
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
+from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
 from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
@@ -67,9 +70,10 @@ def _novo_chat():
 def _nova_conversa():
     st.session_state.chat = _novo_chat()
     st.session_state.messages = []
+    st.session_state.composicao = Composicao()
 
 
-if "chat" not in st.session_state:
+if "chat" not in st.session_state or "composicao" not in st.session_state:
     _nova_conversa()
 
 st.sidebar.button("Nova conversa", on_click=_nova_conversa, width="stretch")
@@ -77,6 +81,34 @@ retriever, aviso_indice = _retriever(cfg.api_key, cfg.embed_model)
 if aviso_indice:
     _retriever.clear()  # não cacheia a falha: após a ingestão, o próximo rerun já acha o índice
     st.sidebar.caption(f"⚠️ {aviso_indice} Respostas sem base no acervo.")
+
+
+def _secao_composicao(c: Composicao):
+    with st.sidebar.expander("Composição", expanded=c.atual is not None):
+        if c.atual is None or c.indice is None:
+            st.caption("Nenhuma composição ainda. Peça, por exemplo: \"crie oito compassos para quarteto de cordas "
+                       "a partir de parciais harmônicos\".")
+            return
+        st.markdown(f"**Versão atual: {c.indice + 1}**  \n{c.atual.resumo}")
+        st.button("Desfazer", on_click=c.desfazer, disabled=c.atual.anterior is None, width="stretch")
+        st.download_button("baixar versão atual (.musicxml)", data=para_musicxml(c.atual.ir),
+                           file_name=f"composicao_v{c.indice + 1}.musicxml",
+                           mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
+        nomes = [f"{i + 1} · {v.experimento['operacao']} · {v.data:%H:%M} · {v.resumo.partition(': ')[2][:50]}"
+                 for i, v in enumerate(c.versoes)]
+        escolhida = st.selectbox("Versões", range(len(nomes)), index=c.indice, format_func=nomes.__getitem__)
+        st.button("Voltar a esta versão", on_click=c.voltar, args=(escolhida,), disabled=escolhida == c.indice,
+                  width="stretch")
+        if len(c.versoes) > 1:
+            de = st.selectbox("Comparar de", range(len(nomes)), index=max(c.indice - 1, 0),
+                              format_func=lambda i: str(i + 1))
+            para = st.selectbox("até", range(len(nomes)), index=c.indice, format_func=lambda i: str(i + 1))
+            dif = c.comparar(de, para)
+            st.markdown(f"{len(dif.adicionados)} adicionados · {len(dif.removidos)} removidos · "
+                        f"{len(dif.alterados)} alterados" if dif else "Sem diferenças.")
+            por_local = Counter(dif.locais.values())  # (parte, compasso) -> eventos mudados
+            for parte in sorted({p for p, _ in por_local}):
+                st.caption(f"{parte}: " + ", ".join(f"c.{n} ({k})" for (p, n), k in sorted(por_local.items()) if p == parte))
 
 
 @st.cache_data(max_entries=64, show_spinner=False)
@@ -131,6 +163,7 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                     chat=st.session_state.chat,
                     retriever=retriever,
                     modelo=cfg.model,
+                    composicao=st.session_state.composicao,
                 )
         except Exception as exc:
             if (erro := mensagem_de_erro(exc)) is None:
@@ -149,3 +182,5 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
             }
             _render(msg, str(len(st.session_state.messages) + 1))  # mesma chave que terá no histórico
             st.session_state.messages += [{"role": "user", "content": pergunta}, msg]
+
+_secao_composicao(st.session_state.composicao)  # no fim: já reflete a Versão criada neste turno

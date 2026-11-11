@@ -4,8 +4,10 @@ Tempo em semibreves, como frações exatas (1 = semibreve, 1/4 = semínima). Alt
 Imutável por convenção: toda operação produz uma nova instância.
 """
 
+from bisect import bisect_right
 from collections import Counter
 from collections.abc import Iterator
+from itertools import accumulate
 from fractions import Fraction
 from typing import Annotated, Literal
 
@@ -162,6 +164,10 @@ class MusicIR(BaseModel):
     compassos: list[Compasso] = Field(min_length=1)
     partes: list[Parte] = Field(min_length=1)
 
+    def inicios(self) -> list[Fraction]:
+        """Posição de início de cada compasso."""
+        return list(accumulate((c.comprimento for c in self.compassos[:-1]), initial=Fraction(0)))
+
     def eventos(self) -> Iterator[tuple[Parte, Voz, Evento]]:
         for parte in self.partes:
             for voz in parte.vozes:
@@ -178,11 +184,25 @@ class MusicIR(BaseModel):
         return self
 
 
+def localizar(ir: MusicIR) -> dict[str, tuple[str, str | None, int | None]]:
+    """id -> (parte, voz, compasso 1..n); partes e vozes entram com voz/compasso None."""
+    inicios = ir.inicios()
+    locais: dict[str, tuple[str, str | None, int | None]] = {}
+    for p in ir.partes:
+        locais[p.id] = (p.id, None, None)
+        for v in p.vozes:
+            locais[v.id] = (p.id, v.id, None)
+            for e in v.eventos:
+                locais[e.id] = (p.id, v.id, bisect_right(inicios, e.inicio))
+    return locais
+
+
 class Diferenca(BaseModel):
     adicionados: list[str] = Field(default_factory=list)
     removidos: list[str] = Field(default_factory=list)
     alterados: dict[str, list[str]] = Field(default_factory=dict, description="id -> campos alterados")
     compassos: list[int] = Field(default_factory=list, description="números (1, 2...) dos compassos alterados")
+    locais: dict[str, tuple[str, int]] = Field(default_factory=dict, description="id do evento -> (parte, compasso)")
 
     def __bool__(self) -> bool:
         return bool(self.adicionados or self.removidos or self.alterados or self.compassos)
@@ -205,10 +225,15 @@ def comparar(antes: MusicIR, depois: MusicIR) -> Diferenca:
     a, b = _por_id(antes), _por_id(depois)
     ca, cb = antes.compassos, depois.compassos
     alterados = {i: [c for c in a[i].keys() | b[i].keys() if a[i].get(c) != b[i].get(c)] for i in a.keys() & b.keys()}
+    alterados = {i: sorted(campos) for i, campos in alterados.items() if campos}
+    adicionados, removidos = [i for i in b if i not in a], [i for i in a if i not in b]
+    locais = {**localizar(antes), **localizar(depois)}  # o lugar novo vale para eventos que mudaram de compasso
     return Diferenca(
-        adicionados=[i for i in b if i not in a],
-        removidos=[i for i in a if i not in b],
-        alterados={i: sorted(campos) for i, campos in alterados.items() if campos},
+        adicionados=adicionados,
+        removidos=removidos,
+        alterados=alterados,
+        locais={i: (parte, compasso) for i in [*adicionados, *removidos, *alterados]
+                for parte, _, compasso in [locais[i]] if compasso is not None},
         compassos=[n for n in range(1, max(len(ca), len(cb)) + 1)
                    if n > min(len(ca), len(cb)) or ca[n - 1] != cb[n - 1]],
     )
