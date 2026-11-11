@@ -35,7 +35,8 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
    (which catches abbreviations such as `s.p.e.` or `c.l.t.`), merged with reciprocal rank fusion and
    boosted for the instrument family. Bar cards bring their work card along.
 3. **Notation (only when asked)**: real MusicXML from the retrieved passages, or a short example the model
-   writes as JSON, which a deterministic builder turns into MusicXML (grimório techniques: `x`/diamond
+   writes as JSON, converted to MusicIR (the internal score model: midicents, exact fractions, per-event
+   provenance) and then by a deterministic builder into MusicXML (grimório techniques: `x`/diamond
    noteheads, Italian indications, quarter tones, tremolo, glissando). Verovio renders it to SVG locally.
 4. **Answer**: the chat receives only the question; the analysis, passages and score list go into that
    turn's system instruction, so the conversation history stays small (questions and answers only).
@@ -137,6 +138,7 @@ muschat/rag/leitores.py   corpus readers (Markdown, PDF/TXT, MusicXML) -> chunks
 muschat/rag/indice.py     Gemini embeddings and the local numpy index
 muschat/rag/busca.py      hybrid search (dense + BM25, RRF) and context assembly
 muschat/rag/ingest.py     `python -m muschat.rag.ingest`
-muschat/notacao/          score schema, MusicXML builder, Verovio renderer
+muschat/musicir.py        MusicIR: parts, voices, typed events, provenance, structural diff
+muschat/notacao/          example schema -> MusicIR, technique table, MusicXML builder, Verovio renderer
 tests/                    pytest suite
 ```

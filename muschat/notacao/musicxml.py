@@ -1,64 +1,142 @@
-"""Builder determinístico Partitura -> MusicXML (score-partwise), com as técnicas do grimório."""
+"""Builder determinístico MusicIR -> MusicXML (score-partwise): várias partes e vozes, quiálteras, microtons e as
+técnicas do grimório. Eventos eletrônicos, curvas de controle e dados espectrais não têm grafia e ficam de fora."""
 
-import re
-import unicodedata
+import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from fractions import Fraction
+from itertools import accumulate
 
-from muschat.notacao.modelo import Nota, Partitura
+from muschat.musicir import CLASSE_DA_LETRA, Altura, Compasso, MusicIR, Nota, Parte, Pausa, Quialtera, Voz
+from muschat.notacao.tecnicas import Tecnica, tecnica
 
-DIVISOES = 8  # por semínima (8 deixa semicolcheia pontuada inteira)
-_DURACAO = {"inteira": (32, "whole"), "minima": (16, "half"), "seminima": (8, "quarter"),
-            "colcheia": (4, "eighth"), "semicolcheia": (2, "16th")}
+_FIGURAS = {Fraction(1, 2**k): nome for k, nome in enumerate(["whole", "half", "quarter", "eighth", "16th", "32nd", "64th"])}
 _CLAVE = {"sol": ("G", "2"), "fa": ("F", "4"), "do3": ("C", "3"), "do4": ("C", "4"), "percussao": ("percussion", None)}
-_ACIDENTE = {1.0: "sharp", -1.0: "flat", 0.5: "quarter-sharp", -0.5: "quarter-flat",
-             1.5: "three-quarters-sharp", -1.5: "three-quarters-flat", 2.0: "double-sharp", -2.0: "flat-flat"}
-_ALTER = {"#": 1, "##": 2, "b": -1, "bb": -2, "+": 0.5, "-": -0.5, "#+": 1.5, "b-": -1.5}
-_ALTURA = re.compile(r"^([A-G])(##|#\+|#|bb|b-|b|\+|-)?(\d)([+-])?$")
+_ACIDENTE = {Fraction(n, 4): nome for n, nome in [
+    (4, "sharp"), (-4, "flat"), (2, "quarter-sharp"), (-2, "quarter-flat"), (6, "three-quarters-sharp"),
+    (-6, "three-quarters-flat"), (8, "double-sharp"), (-8, "flat-flat"),
+    (1, "natural-up"), (-1, "natural-down"), (3, "sharp-down"), (-3, "flat-up"), (5, "sharp-up"), (-5, "flat-down"),
+]}
+_LETRA_PADRAO = "C C D D E F F G G A A B".split()  # sem dica de grafia: sustenidos
 
 
-@dataclass(frozen=True)
-class Tecnica:
-    texto: str | None = None
-    notehead: str | None = None
-    technical: str | None = None
-    tremolo: bool = False
+@dataclass
+class _EstadoVoz:
+    textos: tuple[str, ...] = ()
+    dinamica: str | None = None
+    glissando_aberto: bool = False
 
 
-TECNICAS = {
-    "sul ponticello": Tecnica("sul pont."),
-    "sul ponticello estremo": Tecnica("sul pont. estr."),
-    "sul tasto": Tecnica("sul tasto"),
-    "flautando": Tecnica("flautando"),
-    "col legno battuto": Tecnica("c.l. batt.", "x"),
-    "col legno tratto": Tecnica("c.l. tratto", "x"),
-    "dietro il ponticello": Tecnica("dietro il pont.", "x"),
-    "sulla cordiera": Tecnica("sulla cordiera", "x"),
-    "scratch": Tecnica("scratch", "x"),
-    "pizzicato": Tecnica("pizz."),
-    "pizz. bartok": Tecnica(technical="snap-pizzicato"),
-    "harmonico": Tecnica(notehead="diamond"),  # grimório: losango, sem o círculo redundante
-    "fischio": Tecnica("fischio", "diamond"),
-    "whistle tone": Tecnica("whistle tone", "diamond"),
-    "tremolo": Tecnica(tremolo=True),
-    "frullato": Tecnica("flz.", tremolo=True),
-    "multifonico": Tecnica("multif."),
-    "slap": Tecnica("slap", "x"),
-    "key click": Tecnica("key click", "x"),
-    "aria": Tecnica("aria", "circle-x"),
-}
-_ALIASES = {"harmonic": "harmonico", "armonico": "harmonico", "arm.": "harmonico", "arm. naturale": "harmonico",
-            "flatterzunge": "frullato", "flz.": "frullato", "snap pizzicato": "pizz. bartok",
-            "bartok pizzicato": "pizz. bartok", "c.l. batt.": "col legno battuto", "c.l.b.": "col legno battuto",
-            "c.l. tratto": "col legno tratto", "c.l.t.": "col legno tratto", "s.p.e.": "sul ponticello estremo",
-            "sul pont.": "sul ponticello", "sul pont. estr.": "sul ponticello estremo", "s.t.": "sul tasto",
-            "multiphonic": "multifonico", "suono eolico": "aria", "chiavi": "key click"}
+def para_musicxml(ir: MusicIR) -> str:
+    raiz = ET.Element("score-partwise", version="4.0")
+    _sub(_sub(raiz, "work"), "work-title", ir.titulo)
+    lista = _sub(raiz, "part-list")
+    for parte in ir.partes:
+        _sub(_sub(lista, "score-part", id=parte.id), "part-name", parte.instrumento)
+    divisoes = _divisoes(ir)
+    for k, parte in enumerate(ir.partes):
+        _parte(_sub(raiz, "part", id=parte.id), parte, ir.compassos, divisoes, com_andamento=k == 0)
+    return ET.tostring(raiz, encoding="unicode", xml_declaration=True)
 
 
-def _tecnica(nome: str) -> Tecnica:
-    chave = unicodedata.normalize("NFKD", nome.strip().lower()).encode("ascii", "ignore").decode()
-    chave = _ALIASES.get(chave, chave)
-    return TECNICAS.get(chave) or Tecnica(texto=nome.strip())  # desconhecida: vira texto, nunca falha
+def _divisoes(ir: MusicIR) -> int:
+    """Divisões por semínima: 8 no mínimo (semicolcheia pontuada inteira), múltiplas de toda quiáltera."""
+    tempos = [c.comprimento for c in ir.compassos]
+    tempos += [t for _, _, e in ir.eventos() if isinstance(e, (Nota, Pausa)) for t in (e.inicio, e.duracao)]
+    return math.lcm(8, *((t * 4).denominator for t in tempos))
+
+
+def _parte(el: ET.Element, parte: Parte, compassos: list[Compasso], divisoes: int, *, com_andamento: bool) -> None:
+    vozes = [v for v in parte.vozes if any(isinstance(e, (Nota, Pausa)) for e in v.eventos)]
+    escritas = [_EscritaVoz(v, divisoes) for v in vozes]
+    inicios = list(accumulate((c.comprimento for c in compassos), initial=Fraction(0)))
+    for n, compasso in enumerate(compassos, 1):
+        medida = _sub(el, "measure", number=str(n))
+        _atributos(medida, compasso, compassos[n - 2] if n > 1 else None, parte, divisoes)
+        if com_andamento and compasso.andamento:
+            _andamento(medida, compasso.andamento)
+        acidentes: dict[tuple[str, int], Fraction] = {}  # (step, oitava) -> alteração vigente no compasso
+        for k, escrita in enumerate(escritas, 1):
+            escrita.escrever(medida, k, inicios[n - 1], inicios[n], acidentes, polifonica=len(escritas) > 1)
+    for escrita in escritas:
+        if escrita.pendentes():
+            raise ValueError(f"voz {escrita.voz.id}: eventos depois do último compasso ({escrita.pendentes()})")
+
+
+class _EscritaVoz:
+    """Escreve uma voz compasso a compasso, mantendo técnica, dinâmica e glissando em curso."""
+
+    def __init__(self, voz: Voz, divisoes: int):
+        self.voz, self.divisoes, self.estado = voz, divisoes, _EstadoVoz()
+        self.eventos = [e for e in voz.eventos if isinstance(e, (Nota, Pausa))]
+        self.i = 0
+        grupos = {q.id: q for q in voz.quialteras}
+        self.cadeia: dict[str, list[str]] = {}  # evento -> grupos, do mais externo ao mais interno
+        for q in voz.quialteras:
+            for id_evento in q.eventos:
+                cadeia: list[str] = []
+                g: Quialtera | None = q
+                while g is not None:
+                    cadeia.insert(0, g.id)
+                    g = grupos.get(g.pai) if g.pai else None
+                self.cadeia[id_evento] = cadeia
+        membros: dict[str, list[str]] = {}
+        for e in self.eventos:
+            for gid in self.cadeia.get(e.id, []):
+                membros.setdefault(gid, []).append(e.id)
+        self.grupos, self.membros = grupos, membros
+
+    def pendentes(self) -> list[str]:
+        return [e.id for e in self.eventos[self.i:]]
+
+    def escrever(self, medida: ET.Element, numero: int, inicio: Fraction, fim: Fraction,
+                 acidentes: dict[tuple[str, int], Fraction], *, polifonica: bool) -> None:
+        """Em parte polifônica toda voz preenche o compasso, e as seguintes voltam ao início com <backup>."""
+        cursor = inicio
+        if numero > 1 and fim > inicio:
+            _sub(_sub(medida, "backup"), "duration", str(self._div(fim - inicio)))
+        while self.i < len(self.eventos) and self.eventos[self.i].inicio < fim:
+            e = self.eventos[self.i]
+            if e.fim > fim:  # shortcut: sem ligaduras através da barra; evoluir quando um motor gerar isso
+                raise ValueError(f"evento {e.id} atravessa a barra do compasso; divida-o com ligadura")
+            if e.inicio > cursor:
+                _avanco(medida, "forward", self._div(e.inicio - cursor), numero)
+            seguinte = self.eventos[self.i + 1] if self.i + 1 < len(self.eventos) else None
+            self._evento(medida, e, seguinte, numero, acidentes)
+            cursor = e.fim
+            self.i += 1
+        if polifonica and cursor < fim:
+            _avanco(medida, "forward", self._div(fim - cursor), numero)
+
+    def _div(self, t: Fraction) -> int:
+        return int(t * 4 * self.divisoes)
+
+    def _evento(self, medida: ET.Element, e: Nota | Pausa, seguinte: Nota | Pausa | None, numero: int,
+                acidentes: dict[tuple[str, int], Fraction]) -> None:
+        estado = self.estado
+        tecnicas = [tecnica(t) for t in e.tecnicas] if isinstance(e, Nota) else []
+        textos = tuple(t.texto for t in tecnicas if t.texto)
+        if isinstance(e, Nota) and textos != estado.textos:  # pausa não muda a técnica em curso
+            retorno = "arco" if "pizz." in estado.textos else "ord."
+            for texto in textos or (retorno,):
+                _direcao_texto(medida, texto, italico=True)
+            estado.textos = textos
+        if e.texto and tecnica(e.texto).texto not in textos:  # não repete o que a técnica já escreveu
+            _direcao_texto(medida, e.texto)
+        if e.dinamica and e.dinamica != estado.dinamica:  # dinâmica vale até a próxima mudança
+            _dinamica(medida, e.dinamica)
+            estado.dinamica = e.dinamica
+        # glissando só entre duas notas: nunca para/de pausa
+        abre = isinstance(e, Nota) and e.glissando and isinstance(seguinte, Nota)
+        cadeia = self.cadeia.get(e.id, [])
+        razao = math.prod((Fraction(self.grupos[g].numerador, self.grupos[g].denominador) for g in cadeia),
+                          start=Fraction(1))
+        tuplets = [(n, "start") for n, g in enumerate(cadeia, 1) if self.membros[g][0] == e.id]
+        tuplets += [(n, "stop") for n, g in reversed(list(enumerate(cadeia, 1))) if self.membros[g][-1] == e.id]
+        _nota(medida, e, tecnicas, numero=numero, duracao=self._div(e.duracao), razao=razao, tuplets=tuplets,
+              fecha_glissando=estado.glissando_aberto and isinstance(e, Nota), abre_glissando=abre,
+              acidentes=acidentes)
+        estado.glissando_aberto = abre
 
 
 def _sub(pai: ET.Element, tag: str, texto: str | None = None, **attrs) -> ET.Element:
@@ -68,76 +146,37 @@ def _sub(pai: ET.Element, tag: str, texto: str | None = None, **attrs) -> ET.Ele
     return el
 
 
-def _alter(altura: str) -> tuple[str, float, str] | None:
-    m = _ALTURA.match(altura.strip())
-    if not m:
-        return None
-    step, acidente, oitava, quarto = m.groups()
-    if quarto and acidente and acidente[-1] in "+-":
-        return None  # quarto de tom escrito duas vezes ("A#+4+"): ambíguo, vira pausa
-    return step, _ALTER.get(acidente or "", 0) + _ALTER.get(quarto or "", 0), oitava
+def _avanco(medida: ET.Element, tag: str, duracao: int, voz: int) -> None:
+    el = _sub(medida, tag)
+    _sub(el, "duration", str(duracao))
+    _sub(el, "voice", str(voz))
 
 
-def para_musicxml(p: Partitura) -> str:
-    raiz = ET.Element("score-partwise", version="4.0")
-    _sub(_sub(raiz, "work"), "work-title", p.titulo)
-    _sub(_sub(_sub(raiz, "part-list"), "score-part", id="P1"), "part-name", p.instrumento)
-    parte = _sub(raiz, "part", id="P1")
-
-    sequencia = [nota for compasso in p.compassos for nota in compasso.notas]
-    soa = [any(_alter(a) for a in nota.alturas) for nota in sequencia]  # nota com altura válida?
-    textos_anteriores: tuple[str, ...] = ()
-    dinamica_atual: str | None = None
-    glissando_aberto = False
-    i = 0
-    for n, compasso in enumerate(p.compassos, 1):
-        medida = _sub(parte, "measure", number=str(n))
-        if n == 1:
-            _atributos(medida, p)
-        acidentes: dict[tuple[str, str], float] = {}  # (step, oitava) -> alteração vigente no compasso
-        for nota in compasso.notas:
-            tecnicas = [_tecnica(t) for t in nota.tecnicas]
-            textos = tuple(t.texto for t in tecnicas if t.texto)
-            if soa[i] and textos != textos_anteriores:  # pausa não muda a técnica em curso
-                retorno = "arco" if "pizz." in textos_anteriores else "ord."
-                for texto in textos or (retorno,):
-                    _direcao_texto(medida, texto, italico=True)
-                textos_anteriores = textos
-            if nota.texto and _tecnica(nota.texto).texto not in textos:  # não repete o que a técnica já escreveu
-                _direcao_texto(medida, nota.texto)
-            if nota.dinamica and nota.dinamica != dinamica_atual:  # dinâmica vale até a próxima mudança
-                _dinamica(medida, nota.dinamica)
-                dinamica_atual = nota.dinamica
-            # glissando só entre duas notas que soam: nunca para/de pausa ou altura inválida
-            abre = nota.glissando and soa[i] and i + 1 < len(sequencia) and soa[i + 1]
-            _nota(medida, nota, tecnicas, fecha_glissando=glissando_aberto and soa[i], abre_glissando=abre,
-                  acidentes=acidentes)
-            glissando_aberto = abre
-            i += 1
-    return ET.tostring(raiz, encoding="unicode", xml_declaration=True)
-
-
-def _atributos(medida: ET.Element, p: Partitura) -> None:
+def _atributos(medida: ET.Element, c: Compasso, anterior: Compasso | None, parte: Parte, divisoes: int) -> None:
+    nova_metrica = anterior is None or (c.numerador, c.denominador) != (anterior.numerador, anterior.denominador)
+    if anterior is not None and not nova_metrica:
+        return
     attrs = _sub(medida, "attributes")
-    _sub(attrs, "divisions", str(DIVISOES))
-    _sub(_sub(attrs, "key"), "fifths", "0")
-    beats, _, beat_type = p.metrica.partition("/")
-    if not (beats.isdigit() and beat_type.isdigit()):
-        beats, beat_type = "4", "4"
+    if anterior is None:
+        _sub(attrs, "divisions", str(divisoes))
+        _sub(_sub(attrs, "key"), "fifths", "0")
     tempo = _sub(attrs, "time")
-    _sub(tempo, "beats", beats)
-    _sub(tempo, "beat-type", beat_type)
-    sign, line = _CLAVE[p.clave]
-    clave = _sub(attrs, "clef")
-    _sub(clave, "sign", sign)
-    if line:
-        _sub(clave, "line", line)
-    if p.andamento:
-        direcao = _sub(medida, "direction", placement="above")
-        metronomo = _sub(_sub(direcao, "direction-type"), "metronome")
-        _sub(metronomo, "beat-unit", "quarter")
-        _sub(metronomo, "per-minute", str(p.andamento))
-        _sub(direcao, "sound", tempo=str(p.andamento))
+    _sub(tempo, "beats", str(c.numerador))
+    _sub(tempo, "beat-type", str(c.denominador))
+    if anterior is None:
+        sign, line = _CLAVE[parte.clave]
+        clave = _sub(attrs, "clef")
+        _sub(clave, "sign", sign)
+        if line:
+            _sub(clave, "line", line)
+
+
+def _andamento(medida: ET.Element, andamento: int) -> None:
+    direcao = _sub(medida, "direction", placement="above")
+    metronomo = _sub(_sub(direcao, "direction-type"), "metronome")
+    _sub(metronomo, "beat-unit", "quarter")
+    _sub(metronomo, "per-minute", str(andamento))
+    _sub(direcao, "sound", tempo=str(andamento))
 
 
 def _direcao_texto(medida: ET.Element, texto: str, italico: bool = False) -> None:
@@ -150,21 +189,44 @@ def _dinamica(medida: ET.Element, dinamica: str) -> None:
     _sub(_sub(tipo, "dynamics"), dinamica)
 
 
+def _grafia(a: Altura) -> tuple[str, Fraction, int]:
+    """(step, alteração em semitons, oitava); a dica de grafia vale se der alteração de até 2 semitons."""
+    n = Fraction(a.midicents, 100)
+    letra: str | None = a.grafia
+    if letra is not None:
+        oitava = round((n - CLASSE_DA_LETRA[letra]) / 12) - 1
+        if abs(n - 12 * (oitava + 1) - CLASSE_DA_LETRA[letra]) > 2:
+            letra = None
+    if letra is None:
+        semitom = round(Fraction(a.midicents, 50)) * 50 // 100  # quarto de tom mais próximo, abaixo do semitom
+        letra, oitava = _LETRA_PADRAO[semitom % 12], semitom // 12 - 1
+    return letra, n - 12 * (oitava + 1) - CLASSE_DA_LETRA[letra], oitava
+
+
+def _figura(notada: Fraction, id_evento: str) -> tuple[str, bool]:
+    for base, nome in _FIGURAS.items():
+        if notada in (base, base * Fraction(3, 2)):
+            return nome, notada != base
+    raise ValueError(f"evento {id_evento}: duração notada {notada} não é figura simples nem pontuada")
+
+
 def _nota(
     medida: ET.Element,
-    nota: Nota,
+    e: Nota | Pausa,
     tecnicas: list[Tecnica],
     *,
+    numero: int,
+    duracao: int,
+    razao: Fraction,
+    tuplets: list[tuple[int, str]],
     fecha_glissando: bool,
     abre_glissando: bool,
-    acidentes: dict[tuple[str, str], float],
+    acidentes: dict[tuple[str, int], Fraction],
 ) -> None:
-    duracao, tipo = _DURACAO[nota.duracao]
-    if nota.pontuada:
-        duracao = duracao * 3 // 2  # exato: DIVISOES=8 torna toda duração par
-    alturas = [a for a in (_alter(x) for x in nota.alturas) if a is not None]
+    tipo, pontuada = _figura(e.duracao * razao, e.id)
+    alturas = [_grafia(a) for a in e.alturas] if isinstance(e, Nota) else [None]
     notehead = next((t.notehead for t in tecnicas if t.notehead), None)
-    for i, altura in enumerate(alturas or [None]):
+    for i, altura in enumerate(alturas):
         el = _sub(medida, "note")
         if i > 0:
             _sub(el, "chord")
@@ -175,38 +237,42 @@ def _nota(
             pitch = _sub(el, "pitch")
             _sub(pitch, "step", step)
             if alter:
-                _sub(pitch, "alter", f"{alter:g}")
-            _sub(pitch, "octave", oitava)
+                _sub(pitch, "alter", f"{float(alter):g}")
+            _sub(pitch, "octave", str(oitava))
         _sub(el, "duration", str(duracao))
-        _sub(el, "voice", "1")
+        _sub(el, "voice", str(numero))
         _sub(el, "type", tipo)
-        if nota.pontuada:
+        if pontuada:
             _sub(el, "dot")
         if altura is not None:
             step, alter, oitava = altura
-            vigente = acidentes.get((step, oitava), 0.0)
             if alter:
-                _sub(el, "accidental", _ACIDENTE.get(alter, "natural"))
-            elif vigente:
+                _sub(el, "accidental", _ACIDENTE.get(Fraction(round(alter * 4), 4), "natural"))
+            elif acidentes.get((step, oitava)):
                 _sub(el, "accidental", "natural")  # cancela acidente anterior no mesmo compasso
             acidentes[(step, oitava)] = alter
+        if razao != 1:
+            modificacao = _sub(el, "time-modification")
+            _sub(modificacao, "actual-notes", str(razao.numerator))
+            _sub(modificacao, "normal-notes", str(razao.denominator))
         if altura is not None and notehead:
             _sub(el, "notehead", notehead)
-        if altura is not None and i == 0:
-            _notacoes(el, tecnicas, fecha_glissando, abre_glissando)
+        if i == 0:
+            _notacoes(el, tecnicas, tuplets, fecha_glissando, abre_glissando)
 
 
-def _notacoes(el: ET.Element, tecnicas: list[Tecnica], fecha_glissando: bool, abre_glissando: bool) -> None:
-    filhos: list[tuple[str, dict, str | None]] = []
+def _notacoes(el: ET.Element, tecnicas: list[Tecnica], tuplets: list[tuple[int, str]], fecha_glissando: bool,
+              abre_glissando: bool) -> None:
+    filhos: list[tuple[str, dict[str, str]]] = [("tuplet", {"type": t, "number": str(n)}) for n, t in tuplets]
     if fecha_glissando:
-        filhos.append(("glissando", {"type": "stop", "number": "1"}, None))
+        filhos.append(("glissando", {"type": "stop", "number": "1"}))
     if abre_glissando:
-        filhos.append(("glissando", {"type": "start", "number": "1", "line-type": "solid"}, None))
+        filhos.append(("glissando", {"type": "start", "number": "1", "line-type": "solid"}))
     if not filhos and not any(t.technical or t.tremolo for t in tecnicas):
         return
     notacoes = _sub(el, "notations")
-    for tag, attrs, texto in filhos:
-        ET.SubElement(notacoes, tag, attrs).text = texto
+    for tag, attrs in filhos:
+        ET.SubElement(notacoes, tag, attrs)
     if any(t.tremolo for t in tecnicas):
         _sub(_sub(notacoes, "ornaments"), "tremolo", "3", type="single")
     tecnicos = [t.technical for t in tecnicas if t.technical]

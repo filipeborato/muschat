@@ -10,8 +10,9 @@ from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
 from muschat import prompts
-from muschat.notacao.modelo import Partitura
-from muschat.notacao.musicxml import TECNICAS, para_musicxml
+from muschat.notacao.modelo import Partitura, para_ir
+from muschat.notacao.musicxml import para_musicxml
+from muschat.notacao.tecnicas import TECNICAS
 
 
 class Analise(BaseModel):
@@ -182,7 +183,7 @@ def _gerar_partitura(
     partitura.compassos = partitura.compassos[:MAX_COMPASSOS_GERADOS]
     if not partitura.compassos:
         return None
-    return Exemplo(partitura.titulo, para_musicxml(partitura), LEGENDA_GERADA, "gerado")
+    return Exemplo(partitura.titulo, para_musicxml(para_ir(partitura)), LEGENDA_GERADA, "gerado")
 
 
 def _analisar(pergunta: str, *, gerador: Gerador, chat: SessaoChat, modelo: str) -> Analise:
