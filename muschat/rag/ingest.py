@@ -9,7 +9,9 @@ import tomllib
 from collections import Counter
 from pathlib import Path
 
-from muschat.rag.indice import Embedder, Indice, construir, salvar
+import numpy as np
+
+from muschat.rag.indice import VERSAO, Embedder, Indice, carregar, construir, salvar
 from muschat.rag.leitores import EXTENSOES, ler
 
 
@@ -21,8 +23,7 @@ def _arquivos(corpus: Path) -> list[Path]:
 
 
 def ingerir(corpus: Path, pasta_indice: Path, embedder: Embedder, modelo: str) -> Indice:
-    """Reconstrói o índice inteiro a partir do corpus (idempotente)."""
-    # shortcut: reembute tudo a cada execução; usar os hashes do manifest p/ incremental se ficar lento
+    """Reconstrói o índice a partir do corpus (idempotente); só embute chunks novos ou alterados."""
     chunks, hashes = [], {}
     for arq in _arquivos(corpus):
         try:
@@ -34,9 +35,20 @@ def ingerir(corpus: Path, pasta_indice: Path, embedder: Embedder, modelo: str) -
             hashes[arq.relative_to(corpus).as_posix()] = hashlib.sha256(arq.read_bytes()).hexdigest()
     if not chunks:
         raise ValueError(f"nenhum arquivo legível ({', '.join(EXTENSOES)}) em {corpus}")
-    indice = construir(chunks, embedder)
+    indice = construir(chunks, embedder, _cache(pasta_indice, modelo))
     salvar(indice, pasta_indice, {"modelo": modelo, "arquivos": hashes})
     return indice
+
+
+def _cache(pasta_indice: Path, modelo: str) -> dict[str, np.ndarray]:
+    """Vetores do índice anterior, se feito com o mesmo modelo e formato (senão reembute tudo)."""
+    try:
+        anterior = carregar(pasta_indice)
+    except (ValueError, OSError):  # índice corrompido: ignora, a ingestão o substitui
+        return {}
+    if not anterior or anterior.manifest.get("modelo") != modelo or anterior.manifest.get("versao") != VERSAO:
+        return {}
+    return {c.texto_embutido: v for c, v in zip(anterior.chunks, anterior.vetores)}
 
 
 TIMEOUT_MS = 60_000
@@ -98,7 +110,7 @@ def main() -> int:
 
     print(f"{len(indice.chunks)} chunks de {len(indice.manifest['arquivos'])} arquivos -> {args.index}/")
     for chave in ("tipo", "familia"):
-        contagem = Counter(getattr(c, chave) or "—" for c in indice.chunks)
+        contagem = Counter(getattr(c, chave) or "(nenhuma)" for c in indice.chunks)
         print(f"  por {chave}: " + ", ".join(f"{k} {v}" for k, v in contagem.most_common()))
     return 0
 

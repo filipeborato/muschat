@@ -47,3 +47,26 @@ def test_arquivo_ilegivel_falha_nomeando_o_arquivo(tmp_path):
     (corpus / "quebrado.musicxml").write_text("<score-partwise>", encoding="utf-8")
     with pytest.raises(ValueError, match="quebrado.musicxml"):
         ingerir(corpus, tmp_path / "index", FakeEmbedder(), "fake-emb")
+
+
+def test_reingestao_so_embute_chunks_novos_ou_alterados(tmp_path):
+    corpus = _corpus(tmp_path)
+    ingerir(corpus, tmp_path / "index", FakeEmbedder(), "fake-emb")
+    (corpus / "novo.md").write_text("# Novo\n\nccc", encoding="utf-8")
+
+    emb = FakeEmbedder()
+    indice = ingerir(corpus, tmp_path / "index", emb, "fake-emb")
+    assert [len(textos) for textos, _ in emb.chamadas] == [1]  # só o novo.md
+    assert len(indice.chunks) == 2
+
+    sem_mudanca = FakeEmbedder()
+    ingerir(corpus, tmp_path / "index", sem_mudanca, "fake-emb")
+    assert sem_mudanca.chamadas == []  # corpus igual: nenhuma chamada à API
+
+
+def test_trocar_modelo_reembute_tudo(tmp_path):
+    corpus = _corpus(tmp_path)
+    ingerir(corpus, tmp_path / "index", FakeEmbedder(), "fake-emb")
+    emb = FakeEmbedder()
+    ingerir(corpus, tmp_path / "index", emb, "outro-emb")
+    assert [len(textos) for textos, _ in emb.chamadas] == [1]

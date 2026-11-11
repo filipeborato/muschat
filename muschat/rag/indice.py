@@ -69,11 +69,15 @@ def normalizar(m: np.ndarray) -> np.ndarray:
     return m / np.where(normas == 0, 1, normas)
 
 
-def construir(chunks: list[Chunk], embedder: Embedder) -> Indice:
-    vetores = embedder.embutir([c.texto_embutido for c in chunks], "documento")
-    if len(vetores) != len(chunks):
-        raise ValueError(f"embedder devolveu {len(vetores)} vetores para {len(chunks)} chunks")
-    return Indice(chunks, normalizar(np.asarray(vetores, dtype=np.float32)))
+def construir(chunks: list[Chunk], embedder: Embedder, cache: dict[str, np.ndarray] | None = None) -> Indice:
+    """Embute os chunks; os que já estão no cache (texto embutido -> vetor) não vão à API."""
+    cache = cache or {}
+    faltam = list(dict.fromkeys(c.texto_embutido for c in chunks if c.texto_embutido not in cache))
+    novos = embedder.embutir(faltam, "documento") if faltam else []
+    if len(novos) != len(faltam):
+        raise ValueError(f"embedder devolveu {len(novos)} vetores para {len(faltam)} chunks")
+    vetores = {**cache, **dict(zip(faltam, novos))}
+    return Indice(chunks, normalizar(np.asarray([vetores[c.texto_embutido] for c in chunks], dtype=np.float32)))
 
 
 def salvar(indice: Indice, pasta: Path, manifest: dict) -> None:
