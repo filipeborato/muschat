@@ -93,7 +93,7 @@ def test_parametro_fora_da_faixa_nao_chama_o_motor():
     chamado = []
     original = CATALOGO["serie_harmonica"]
     espiao = Procedimento(original.nome, original.descricao, original.parametros,
-                          lambda *a: chamado.append(1) or original.funcao(*a))
+                          lambda *a: chamado.append(1) or original.funcao(*a), requer_composicao=False)
     r = _compor(Composicao(), _plano(parametros={"compassos": 999}), {"serie_harmonica": espiao})
     assert r.versao is None and "compassos" in r.resumo and not chamado
 
@@ -226,3 +226,38 @@ def test_mudar_o_titulo_fora_de_uma_selecao_parcial_e_rejeitado():
     catalogo = {**CATALOGO, "renomear": Procedimento("renomear", "x", {}, renomear, requer_composicao=True)}
     c = _quarteto()
     assert _compor(c, _plano(procedimento="renomear", selecao={"partes": ["P4"]}), catalogo).versao is None
+
+
+def test_hipotese_e_restricoes_violadas_aparecem_no_resumo():
+    c = _quarteto()
+    plano = _plano(procedimento="densidade", parametros={"inicial": 1, "final": 3},
+                   selecao={"compasso_inicial": 3, "compasso_final": 4}, semente=2)
+    plano |= {"hipoteses": ["fragmentado = densidade 1 -> 3 ataques por semínima"],
+              "restricoes": [{"tipo": "densidade_maxima", "valor": 2}]}
+    r = _compor(c, plano)
+    assert "hipótese: fragmentado" in r.resumo and "densidade_maxima" in r.resumo
+    assert r.versao.experimento["violacoes"]
+
+
+def test_reaplicar_refaz_a_operacao_a_partir_da_mesma_origem_com_o_parametro_ajustado():
+    from muschat.orquestrador import reaplicar
+    c = _quarteto()
+    r = _compor(c, _plano(procedimento="transpor", parametros={"intervalo": 100}, selecao={"partes": ["P4"]}))
+    r2 = reaplicar(c, [{"intervalo": 200}])
+    assert r2.versao is not None and r2.versao.anterior == 0 and c.atual is r2.versao
+    base = c.versoes[0].ir
+    antes = [e.alturas[0].midicents for e in _eventos(base, {"P4"}).values() if isinstance(e, Nota)]
+    depois = [e.alturas[0].midicents for e in _eventos(r2.versao.ir, {"P4"}).values() if isinstance(e, Nota)]
+    assert depois == [a + 200 for a in antes]
+    assert r2.versao.experimento["semente"] == r.versao.experimento["semente"]
+    assert reaplicar(c, [{"intervalo": 99999}]).versao is None
+
+
+def test_plano_que_cria_e_transforma_na_mesma_operacao():
+    plano = _plano(parametros={"compassos": 4})
+    plano["operacoes"] += [{"procedimento": "subdividir", "parametros": [{"nome": "proporcao", "valor": 0.5}]},
+                           {"procedimento": "densidade", "parametros": [{"nome": "inicial", "valor": 0.5},
+                                                                         {"nome": "final", "valor": 2}]}]
+    r = _compor(Composicao(), plano)
+    assert r.versao is not None, r.resumo
+    assert any(v.quialteras for p in r.versao.ir.partes for v in p.vozes)

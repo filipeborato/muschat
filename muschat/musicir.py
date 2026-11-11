@@ -184,6 +184,35 @@ class MusicIR(BaseModel):
         return self
 
 
+_POTENCIAS = [Fraction(1, 2**k) for k in range(7)]  # semibreve .. semifusa
+
+
+def figura(d: Fraction) -> bool:
+    """Duração escrita com uma figura só (simples ou pontuada)."""
+    return any(d in (b, b * Fraction(3, 2)) for b in _POTENCIAS)
+
+
+def figuras(d: Fraction) -> list[Fraction]:
+    """Decompõe uma duração em figuras (a maior primeiro): 5/8 -> [1/2, 1/8]."""
+    if figura(d):
+        return [d]
+    maior = next((b for b in _POTENCIAS if b <= d), None)
+    if maior is None or (d * 64).denominator != 1:
+        raise ValueError(f"duração {d} não se escreve com figuras até a semifusa")
+    return [maior, *figuras(d - maior)]
+
+
+def pedacos(inicios: list[Fraction], inicio: Fraction, duracao: Fraction) -> list[tuple[Fraction, Fraction]]:
+    """(início, duração) cortados nas barras de compasso (`inicios`) e em figuras."""
+    cortes = [inicio, *(b for b in inicios if inicio < b < inicio + duracao), inicio + duracao]
+    saida = []
+    for a, b in zip(cortes, cortes[1:]):
+        for f in figuras(b - a):
+            saida.append((a, f))
+            a += f
+    return saida
+
+
 def localizar(ir: MusicIR) -> dict[str, tuple[str, str | None, int | None]]:
     """id -> (parte, voz, compasso 1..n); partes e vozes entram com voz/compasso None."""
     inicios = ir.inicios()

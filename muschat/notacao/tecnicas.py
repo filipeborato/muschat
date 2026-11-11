@@ -10,6 +10,7 @@ class Tecnica:
     notehead: str | None = None
     technical: str | None = None
     tremolo: bool = False
+    articulacao: str | None = None  # nome MusicXML (<articulations>)
 
 
 TECNICAS = {
@@ -33,13 +34,42 @@ TECNICAS = {
     "slap": Tecnica("slap", "x"),
     "key click": Tecnica("key click", "x"),
     "aria": Tecnica("aria", "circle-x"),
+    "staccato": Tecnica(articulacao="staccato"),
+    "staccatissimo": Tecnica(articulacao="staccatissimo"),
+    "tenuto": Tecnica(articulacao="tenuto"),
+    "accento": Tecnica(articulacao="accent"),
+    "marcato": Tecnica(articulacao="strong-accent"),
 }
 ALIASES = {"harmonic": "harmonico", "armonico": "harmonico", "arm.": "harmonico", "arm. naturale": "harmonico",
            "flatterzunge": "frullato", "flz.": "frullato", "snap pizzicato": "pizz. bartok",
            "bartok pizzicato": "pizz. bartok", "c.l. batt.": "col legno battuto", "c.l.b.": "col legno battuto",
            "c.l. tratto": "col legno tratto", "c.l.t.": "col legno tratto", "s.p.e.": "sul ponticello estremo",
            "sul pont.": "sul ponticello", "sul pont. estr.": "sul ponticello estremo", "s.t.": "sul tasto",
-           "multiphonic": "multifonico", "suono eolico": "aria", "chiavi": "key click"}
+           "multiphonic": "multifonico", "suono eolico": "aria", "chiavi": "key click", "stacc.": "staccato",
+           "accent": "accento", "acento": "accento", "ten.": "tenuto"}
+
+
+class Indicacoes:
+    """Indicações escritas de uma voz, evento a evento: a técnica vale até mudar (a volta é "ord.", ou "arco"
+    depois de pizz.), a dinâmica até a próxima marca, e o texto do evento não repete o da técnica."""
+
+    def __init__(self) -> None:
+        self.textos: tuple[str, ...] = ()
+        self.dinamica: str | None = None
+
+    def proximo(self, tecnicas: list[Tecnica], nota: bool, texto: str | None,
+                dinamica: str | None) -> tuple[list[str], list[str], str | None]:
+        """(textos em itálico da técnica, textos livres, dinâmica nova) a escrever neste evento."""
+        italicos: list[str] = []
+        textos = tuple(t.texto for t in tecnicas if t.texto)
+        if nota and textos != self.textos:  # pausa não muda a técnica em curso
+            italicos = list(textos) or ["arco" if "pizz." in self.textos else "ord."]
+            self.textos = textos
+        livres = [texto] if texto and tecnica(texto).texto not in textos else []
+        nova = dinamica if dinamica and dinamica != self.dinamica else None
+        if nova:
+            self.dinamica = nova
+        return italicos, livres, nova
 
 
 def tecnica(nome: str) -> Tecnica:

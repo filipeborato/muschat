@@ -43,7 +43,11 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
    procedures from the Python catalog (`muschat/procedimentos.py`) with parameters inside their ranges, plus a
    selection (parts, voices, bars). Invalid plans are refused before anything runs; the model never writes code.
    The procedure runs on MusicIR with a seed, and the orchestrator rejects the result if anything outside the
-   selection changed. The result becomes a new version of the session composition.
+   selection changed. A single constraint checker (range, forbidden interval, no unison, maximum density) runs
+   after every operation and its violations are reported, not hidden. Subjective requests ("mais fragmentado") come
+   back as explicit operational hypotheses with numbers, which the sidebar lets you adjust and re-apply without
+   calling the model. The result becomes a new version of the session composition, engraved with Abjad +
+   LilyPond (score and parts as PDF, `.ly` download) when LilyPond is installed.
 4. **Answer**: the chat receives only the question; the analysis, passages and score list go into that
    turn's system instruction, so the conversation history stays small (questions and answers only).
 
@@ -59,6 +63,11 @@ cp .env.example .env         # then put your key in .env
 uv run python -m muschat.rag.ingest   # builds index/ from corpus/ (optional, see below)
 uv run streamlit run app.py  # opens http://localhost:8501
 ```
+
+Optional, for engraved scores (grade + one PDF per instrument): install [LilyPond](https://lilypond.org) 2.25.26 or
+newer (2.26 works) and put it on `PATH`, or set `LILYPOND=<path to lilypond.exe>` in `.env`. Without it, composition
+scores are rendered by Verovio from MusicXML and the app says what is lost. On Windows the app also finds an
+unzipped release in `%LOCALAPPDATA%\Programs\lilypond-*`.
 
 Without an index the chat still works and says it is answering from general knowledge.
 
@@ -115,7 +124,12 @@ Paste these into the chat to exercise the current features:
    harmônicos.` shows a four-part score (version 1 in the sidebar's **Composição** section, with its MusicXML
    download). Then `Aplique um processo às durações do violoncelo, preservando os outros instrumentos.` creates
    version 2; comparing 1 → 2 in the sidebar lists changes only in the cello part. **Desfazer** goes back to 1.
-10. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
+10. **Engraving and procedures**: `Crie oito compassos para quarteto de cordas utilizando quiálteras, harmônicos e
+    transformação progressiva de densidade.` (with LilyPond installed) shows the engraved score with download
+    buttons for the `.ly`, the score PDF and one PDF per instrument. Then `Deixe os compassos finais mais
+    fragmentados.` shows the operational hypothesis in the answer and in the sidebar, and changes only the final
+    bars; **Ajustar parâmetros e reaplicar** changes a number and re-runs it.
+11. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
 
 ## Troubleshooting
 
@@ -150,9 +164,20 @@ muschat/rag/busca.py      hybrid search (dense + BM25, RRF) and context assembly
 muschat/rag/ingest.py     `python -m muschat.rag.ingest`
 muschat/musicir.py        MusicIR: parts, voices, typed events, provenance, structural diff
 muschat/plano.py          composition plan schema (operations, parameters, selection)
-muschat/procedimentos.py  Python procedure catalog (harmonic series, duration permutation)
+muschat/procedimentos/    Python procedure catalog: generation (harmonic series, distribution by range),
+                          melodic (transpose, invert, retrograde, rotate, interval scaling), rhythmic
+                          (augmentation/diminution, permutation, tuplet subdivision), density and progressive
+                          ramps (register, dynamics), techniques
+muschat/restricoes.py     constraint checker (range, forbidden interval, no unison, max density)
+muschat/notacao/lilypond.py  MusicIR -> Abjad -> LilyPond text; LilyPond detection and engraving (PDF/SVG)
 muschat/orquestrador.py   composition turn: plan -> catalog checks -> procedure -> preservation check -> version
 muschat/composicao.py     session composition: versions, undo, go back, compare
 muschat/notacao/          example schema -> MusicIR, technique table, MusicXML builder, Verovio renderer
 tests/                    pytest suite
 ```
+
+## License
+
+Muschat depends on [Abjad](https://github.com/Abjad/abjad), which is GPL-3.0, so a distributed copy of Muschat is a
+combined work under GPL-3.0. LilyPond (GPL-3.0) is an external program the user installs; it is called as a process
+and never shipped with the project.

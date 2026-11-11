@@ -11,8 +11,10 @@ from muschat import prompts
 from muschat.composicao import Composicao, Versao
 from muschat.musicir import MusicIR, Proveniencia, comparar, localizar
 from muschat.notacao.musicxml import para_musicxml
-from muschat.plano import Operacao, Plano
+from muschat.notacao.tecnicas import TECNICAS
+from muschat.plano import Operacao, Parametro, Plano
 from muschat.procedimentos import CATALOGO, Procedimento
+from muschat.restricoes import verificar
 from muschat.seguranca import neutralizar
 
 if TYPE_CHECKING:
@@ -41,24 +43,60 @@ def compor(
     atual = composicao.atual.ir if composicao.atual else None
     try:
         plano = _planejar(pedido, atual, gerador=gerador, chat=chat, modelo=modelo, catalogo=catalogo)
+    except Recusa as exc:
+        return _recusa(exc)
+    return _aplicar(plano, composicao, composicao.indice, pedido=pedido, modelo=modelo, catalogo=catalogo)
+
+
+def reaplicar(composicao: Composicao, parametros: list[dict[str, float]],
+              catalogo: dict[str, Procedimento] = CATALOGO) -> Resultado:
+    """Refaz a operação da Versão atual, a partir da mesma Versão de origem e com a mesma semente, trocando só os
+    parâmetros (o compositor ajustou a hipótese operacional). Não chama o modelo."""
+    versao = composicao.atual
+    if versao is None:
+        return _recusa(Recusa("não há operação para reaplicar."))
+    plano = Plano.model_validate(versao.experimento["plano"])
+    plano = plano.model_copy(update={"semente": versao.experimento["semente"], "operacoes": [
+        op.model_copy(update={"parametros": [Parametro(nome=k, valor=v) for k, v in novos.items()]})
+        for op, novos in zip(plano.operacoes, parametros, strict=True)]})
+    return _aplicar(plano, composicao, versao.anterior, pedido=f"{versao.experimento['pedido']} (reaplicado)",
+                    modelo=versao.experimento["modelo"], catalogo=catalogo)
+
+
+def _recusa(exc: Exception) -> Resultado:
+    return Resultado(f"Operação recusada; a composição não mudou. Motivo: {exc}", None)
+
+
+def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: str, modelo: str,
+             catalogo: dict[str, Procedimento]) -> Resultado:
+    atual = None if base is None else composicao.versoes[base].ir
+    try:
         if plano.motor == "openmusic":
             raise Recusa("o motor OpenMusic ainda não está integrado; peça com o motor Python ou automático.")
-        parametros = [_parametros(op, catalogo, atual) for op in plano.operacoes]
+        parametros, existe = [], atual is not None
+        for op in plano.operacoes:  # uma operação que cria peça vale para as seguintes do mesmo plano
+            parametros.append(_parametros(op, catalogo, existe))
+            existe = existe or not catalogo[op.procedimento].requer_composicao
         _validar_selecao(plano, atual)
         semente = plano.semente if plano.semente is not None else random.randrange(2**31)
         operacao = f"op{len(composicao.versoes) + 1}"
         nova = _executar(plano, parametros, semente, operacao, atual, catalogo)
     except Recusa as exc:
-        return Resultado(f"Operação recusada; a composição não mudou. Motivo: {exc}", None)
+        return _recusa(exc)
+    violacoes = [str(v) for v in verificar(nova, plano.restricoes)]
     passos = ", ".join(f"{op.procedimento}({_texto(p, catalogo[op.procedimento])})"
                        for op, p in zip(plano.operacoes, parametros))
     resumo = (f"Versão {len(composicao.versoes) + 1}: {passos}, semente {semente}, motor Python; "
               f"{len(nova.partes)} partes, {len(nova.compassos)} compassos"
-              + ("" if plano.selecao.total else f"; seleção {plano.selecao.model_dump(exclude_defaults=True)}"))
+              + ("" if plano.selecao.total else f"; seleção {plano.selecao.model_dump(exclude_defaults=True)}")
+              + "".join(f"; hipótese: {neutralizar(h)}" for h in plano.hipoteses)
+              + (f"; restrições violadas ({len(violacoes)}): {'; '.join(violacoes[:5])}" if violacoes
+                 else "; restrições cumpridas"))
     versao = composicao.adicionar(nova, resumo, {
-        "pedido": pedido, "modelo": modelo, "plano": plano.model_dump(), "operacao": operacao,
+        "pedido": pedido, "modelo": modelo, "plano": plano.model_dump(mode="json"), "operacao": operacao,
         "procedimentos": [op.procedimento for op in plano.operacoes], "parametros": parametros, "semente": semente,
-    })
+        "violacoes": violacoes,
+    }, anterior=base)
     return Resultado(resumo, versao)
 
 
@@ -70,7 +108,7 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         model=modelo,
         contents=[*chat.get_history(), types.Content(role="user", parts=[types.Part(text=texto)])],
         config=types.GenerateContentConfig(
-            system_instruction=prompts.PLANO.format(catalogo=_catalogo_no_prompt(catalogo)),
+            system_instruction=prompts.PLANO.format(catalogo=_catalogo_no_prompt(catalogo), tecnicas=", ".join(TECNICAS)),
             temperature=0.2,
             response_mime_type="application/json",
             response_schema=Plano,
@@ -82,14 +120,14 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         raise Recusa("o plano composicional devolvido pelo modelo não é válido.") from exc
 
 
-def _parametros(op: Operacao, catalogo: dict[str, Procedimento], atual: MusicIR | None) -> dict[str, float]:
+def _parametros(op: Operacao, catalogo: dict[str, Procedimento], existe: bool) -> dict[str, float]:
     nome, dados = op.procedimento, {p.nome: p.valor for p in op.parametros}
     if len(dados) < len(op.parametros):
         raise Recusa(f"{nome}: parâmetro repetido no plano.")
     if nome not in catalogo:
         raise Recusa(f"o procedimento {nome!r} não existe no catálogo ({', '.join(catalogo)}).")
     proc = catalogo[nome]
-    if proc.requer_composicao and atual is None:
+    if proc.requer_composicao and not existe:
         raise Recusa(f"{nome} transforma uma composição, e ainda não há nenhuma nesta conversa.")
     if desconhecidos := dados.keys() - proc.parametros.keys():
         raise Recusa(f"{nome} não tem os parâmetros {sorted(desconhecidos)}.")
@@ -103,10 +141,8 @@ def _parametros(op: Operacao, catalogo: dict[str, Procedimento], atual: MusicIR 
 
 def _validar_selecao(plano: Plano, atual: MusicIR | None) -> None:
     sel = plano.selecao
-    if sel.total:
+    if sel.total or atual is None:  # peça nova: a seleção vale sobre o que o plano acabou de criar
         return
-    if atual is None:
-        raise Recusa("a seleção aponta para uma composição que ainda não existe.")
     partes = {p.id for p in atual.partes}
     vozes = {v.id for p in atual.partes for v in p.vozes}
     if inexistentes := [i for i in sel.partes if i not in partes] + [i for i in sel.vozes if i not in vozes]:

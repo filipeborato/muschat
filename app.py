@@ -1,9 +1,11 @@
 """Muschat: UI do chat em Streamlit."""
 
+import io
 import os
 import re
 from collections import Counter
 from dataclasses import asdict
+import zipfile
 from pathlib import Path
 
 import streamlit as st
@@ -15,8 +17,11 @@ from streamlit.errors import StreamlitSecretNotFoundError
 from muschat.composicao import Composicao
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
+from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
+from muschat.orquestrador import reaplicar
+from muschat.procedimentos import CATALOGO
 from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
 from muschat.reasoning import responder
@@ -91,6 +96,7 @@ def _secao_composicao(c: Composicao):
             return
         st.markdown(f"**Versão atual: {c.indice + 1}**  \n{c.atual.resumo}")
         st.button("Desfazer", on_click=c.desfazer, disabled=c.atual.anterior is None, width="stretch")
+        _ajustar(c)
         st.download_button("baixar versão atual (.musicxml)", data=para_musicxml(c.atual.ir),
                            file_name=f"composicao_v{c.indice + 1}.musicxml",
                            mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
@@ -111,19 +117,75 @@ def _secao_composicao(c: Composicao):
                 st.caption(f"{parte}: " + ", ".join(f"c.{n} ({k})" for (p, n), k in sorted(por_local.items()) if p == parte))
 
 
+def _ajustar(c: Composicao):
+    """Hipótese operacional editável: muda um parâmetro e refaz a operação da Versão atual, sem chamar o modelo."""
+    assert c.atual is not None and c.indice is not None
+    exp = c.atual.experimento
+    with st.popover("Ajustar parâmetros e reaplicar", width="stretch"):
+        for h in exp["plano"]["hipoteses"]:
+            st.caption(f"Hipótese: {h}")
+        novos = []
+        for k, (nome, params) in enumerate(zip(exp["procedimentos"], exp["parametros"])):
+            faixas = CATALOGO[nome].parametros
+            st.markdown(f"`{nome}`" + ("" if faixas else " (sem parâmetros)"))
+            novos.append({p: float(st.number_input(
+                f"{p} ({faixas[p].unidade or faixas[p].descricao})", min_value=float(faixas[p].minimo),
+                max_value=float(faixas[p].maximo), value=float(v), step=1.0 if faixas[p].inteiro else 0.05,
+                key=f"ajuste-{c.indice}-{k}-{p}")) for p, v in params.items()})
+        if st.button("Reaplicar", width="stretch", key=f"reaplicar-{c.indice}"):
+            resultado = reaplicar(c, novos)
+            (st.toast if resultado.versao else st.error)(resultado.resumo)
+            if resultado.versao:
+                st.rerun()
+
+
 @st.cache_data(max_entries=64, show_spinner=False)
 def _svg(musicxml: str) -> str | None:
     return svg_de(musicxml)
 
 
+@st.cache_resource(show_spinner=False)
+def _lilypond(configurado: str | None) -> Lilypond | None:
+    return detectar(configurado)
+
+
+@st.cache_data(max_entries=16, show_spinner="Gravando a partitura com o LilyPond...")
+def _gravar(fontes: tuple[tuple[str, str], ...]) -> Gravacao:
+    return gravar(dict(fontes), _lilypond(os.environ.get("LILYPOND")))
+
+
+def _nome_arquivo(texto: str) -> str:
+    return re.sub(r"[^\w-]+", "_", texto).strip("_")[:60] or "partitura"
+
+
 def _render_partituras(partituras: list[dict], chave: str):
     for i, p in enumerate(partituras):
         st.caption(p["legenda"])
-        if svg := _svg(p["musicxml"]):
-            st.image(svg, width="stretch")  # <img>: o SVG não executa script
+        nome = _nome_arquivo(p["titulo"])
+        gravacao = _gravar(tuple(p["lilypond"].items())) if p.get("lilypond") else None
+        if gravacao and gravacao.svgs:
+            for pagina in gravacao.svgs:
+                st.image(pagina, width="stretch")  # <img>: o SVG não executa script
+        elif svg := _svg(p["musicxml"]):
+            st.image(svg, width="stretch")
         else:
             st.code(p["musicxml"], language="xml")
-        nome = re.sub(r"[^\w-]+", "_", p["titulo"]).strip("_")[:60] or "partitura"
+        if gravacao and gravacao.aviso:
+            st.caption(f"⚠️ {gravacao.aviso}")
+        if p.get("lilypond"):
+            colunas = st.columns(2)
+            fontes_ly = io.BytesIO()
+            with zipfile.ZipFile(fontes_ly, "w", zipfile.ZIP_DEFLATED) as z:
+                for fonte, texto in p["lilypond"].items():
+                    z.writestr(f"{nome}_{_nome_arquivo(fonte)}.ly", texto)
+            colunas[0].download_button(".ly da grade e das partes (.zip)", data=fontes_ly.getvalue(),
+                                       file_name=f"{nome}_lilypond.zip", mime="application/zip",
+                                       key=f"ly-{chave}-{i}", on_click="ignore")
+            for k, (fonte, pdf) in enumerate((gravacao.pdfs if gravacao else {}).items()):
+                colunas[(k + 1) % 2].download_button(
+                    f"PDF {'da grade' if fonte == 'grade' else fonte}", data=pdf,
+                    file_name=f"{nome}_{_nome_arquivo(fonte)}.pdf", mime="application/pdf",
+                    key=f"pdf-{chave}-{i}-{k}", on_click="ignore")
         st.download_button(
             "baixar .musicxml",
             data=p["musicxml"],

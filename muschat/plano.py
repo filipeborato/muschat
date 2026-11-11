@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from muschat.restricoes import Restricao
+
 
 class Parametro(BaseModel):
     nome: str
@@ -43,7 +45,9 @@ class Plano(BaseModel):
                                     description='Um por parte: ["violino", "violino", ...].')
     estrutura: str = Field(default="", description="Estrutura temporal (compassos, seções).")
     tecnicas: list[str] = Field(default_factory=list)
-    restricoes: list[str] = Field(default_factory=list)
+    restricoes: list[Restricao] = Field(default_factory=list, description="Verificadas depois da operação.")
+    hipoteses: list[str] = Field(default_factory=list, description='Pedido subjetivo traduzido em parâmetros: '
+                                 '"fragmentado = densidade 1 -> 3 ataques/semínima nos compassos 7-8".')
     operacoes: list[Operacao] = Field(min_length=1, max_length=8)
     selecao: Selecao = Field(default_factory=Selecao)
     motor: Literal["automatico", "python", "openmusic"] = "automatico"

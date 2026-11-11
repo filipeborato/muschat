@@ -3,12 +3,11 @@ técnicas do grimório. Eventos eletrônicos, curvas de controle e dados espectr
 
 import math
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from fractions import Fraction
 from itertools import accumulate
 
 from muschat.musicir import CLASSE_DA_LETRA, Altura, Compasso, MusicIR, Nota, Parte, Pausa, Quialtera, Voz
-from muschat.notacao.tecnicas import Tecnica, tecnica
+from muschat.notacao.tecnicas import Indicacoes, Tecnica, tecnica
 
 _FIGURAS = {Fraction(1, 2**k): nome for k, nome in enumerate(["whole", "half", "quarter", "eighth", "16th", "32nd", "64th"])}
 _CLAVE = {"sol": ("G", "2"), "fa": ("F", "4"), "do3": ("C", "3"), "do4": ("C", "4"), "percussao": ("percussion", None)}
@@ -18,13 +17,6 @@ _ACIDENTE = {Fraction(n, 4): nome for n, nome in [
     (1, "natural-up"), (-1, "natural-down"), (3, "sharp-down"), (-3, "flat-up"), (5, "sharp-up"), (-5, "flat-down"),
 ]}
 _LETRA_PADRAO = "C C D D E F F G G A A B".split()  # sem dica de grafia: sustenidos
-
-
-@dataclass
-class _EstadoVoz:
-    textos: tuple[str, ...] = ()
-    dinamica: str | None = None
-    glissando_aberto: bool = False
 
 
 def para_musicxml(ir: MusicIR) -> str:
@@ -67,7 +59,7 @@ class _EscritaVoz:
     """Escreve uma voz compasso a compasso, mantendo técnica, dinâmica e glissando em curso."""
 
     def __init__(self, voz: Voz, divisoes: int):
-        self.voz, self.divisoes, self.estado = voz, divisoes, _EstadoVoz()
+        self.voz, self.divisoes, self.indicacoes, self.glissando_aberto = voz, divisoes, Indicacoes(), False
         self.eventos = [e for e in voz.eventos if isinstance(e, (Nota, Pausa))]
         self.i = 0
         grupos = {q.id: q for q in voz.quialteras}
@@ -113,19 +105,14 @@ class _EscritaVoz:
 
     def _evento(self, medida: ET.Element, e: Nota | Pausa, seguinte: Nota | Pausa | None, numero: int,
                 acidentes: dict[tuple[str, int], Fraction]) -> None:
-        estado = self.estado
         tecnicas = [tecnica(t) for t in e.tecnicas] if isinstance(e, Nota) else []
-        textos = tuple(t.texto for t in tecnicas if t.texto)
-        if isinstance(e, Nota) and textos != estado.textos:  # pausa não muda a técnica em curso
-            retorno = "arco" if "pizz." in estado.textos else "ord."
-            for texto in textos or (retorno,):
-                _direcao_texto(medida, texto, italico=True)
-            estado.textos = textos
-        if e.texto and tecnica(e.texto).texto not in textos:  # não repete o que a técnica já escreveu
-            _direcao_texto(medida, e.texto)
-        if e.dinamica and e.dinamica != estado.dinamica:  # dinâmica vale até a próxima mudança
-            _dinamica(medida, e.dinamica)
-            estado.dinamica = e.dinamica
+        italicos, livres, dinamica = self.indicacoes.proximo(tecnicas, isinstance(e, Nota), e.texto, e.dinamica)
+        for texto in italicos:
+            _direcao_texto(medida, texto, italico=True)
+        for texto in livres:
+            _direcao_texto(medida, texto)
+        if dinamica:
+            _dinamica(medida, dinamica)
         # glissando só entre duas notas: nunca para/de pausa
         abre = isinstance(e, Nota) and e.glissando and isinstance(seguinte, Nota)
         cadeia = self.cadeia.get(e.id, [])
@@ -134,9 +121,9 @@ class _EscritaVoz:
         tuplets = [(n, "start") for n, g in enumerate(cadeia, 1) if self.membros[g][0] == e.id]
         tuplets += [(n, "stop") for n, g in reversed(list(enumerate(cadeia, 1))) if self.membros[g][-1] == e.id]
         _nota(medida, e, tecnicas, numero=numero, duracao=self._div(e.duracao), razao=razao, tuplets=tuplets,
-              fecha_glissando=estado.glissando_aberto and isinstance(e, Nota), abre_glissando=abre,
+              fecha_glissando=self.glissando_aberto and isinstance(e, Nota), abre_glissando=abre,
               acidentes=acidentes)
-        estado.glissando_aberto = abre
+        self.glissando_aberto = abre
 
 
 def _sub(pai: ET.Element, tag: str, texto: str | None = None, **attrs) -> ET.Element:
@@ -189,7 +176,7 @@ def _dinamica(medida: ET.Element, dinamica: str) -> None:
     _sub(_sub(tipo, "dynamics"), dinamica)
 
 
-def _grafia(a: Altura) -> tuple[str, Fraction, int]:
+def grafia(a: Altura) -> tuple[str, Fraction, int]:
     """(step, alteração em semitons, oitava); a dica de grafia vale se der alteração de até 2 semitons."""
     n = Fraction(a.midicents, 100)
     letra: str | None = a.grafia
@@ -224,7 +211,7 @@ def _nota(
     acidentes: dict[tuple[str, int], Fraction],
 ) -> None:
     tipo, pontuada = _figura(e.duracao * razao, e.id)
-    alturas = [_grafia(a) for a in e.alturas] if isinstance(e, Nota) else [None]
+    alturas = [grafia(a) for a in e.alturas] if isinstance(e, Nota) else [None]
     notehead = next((t.notehead for t in tecnicas if t.notehead), None)
     for i, altura in enumerate(alturas):
         el = _sub(medida, "note")
@@ -268,13 +255,18 @@ def _notacoes(el: ET.Element, tecnicas: list[Tecnica], tuplets: list[tuple[int, 
         filhos.append(("glissando", {"type": "stop", "number": "1"}))
     if abre_glissando:
         filhos.append(("glissando", {"type": "start", "number": "1", "line-type": "solid"}))
-    if not filhos and not any(t.technical or t.tremolo for t in tecnicas):
+    if not filhos and not any(t.technical or t.tremolo or t.articulacao for t in tecnicas):
         return
     notacoes = _sub(el, "notations")
     for tag, attrs in filhos:
         ET.SubElement(notacoes, tag, attrs)
     if any(t.tremolo for t in tecnicas):
         _sub(_sub(notacoes, "ornaments"), "tremolo", "3", type="single")
+    articulacoes = [t.articulacao for t in tecnicas if t.articulacao]
+    if articulacoes:
+        bloco = _sub(notacoes, "articulations")
+        for tag in articulacoes:
+            _sub(bloco, tag)
     tecnicos = [t.technical for t in tecnicas if t.technical]
     if tecnicos:
         tecnico = _sub(notacoes, "technical")

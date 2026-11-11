@@ -150,13 +150,13 @@ https://github.com/openmusic-project/"; a pasta padrão é `~/OM/Libraries/` (OM
 | SuperVP (executável) | proprietário do IRCAM, contrato do Forum: uso não comercial, cópia proibida | forum.ircam.fr/legal/contrat-de-licence-forum-ircam/ | **Nunca.** Download pessoal pelo Forum. Assinatura exigida: não confirmado. |
 | Csound | LGPL-2.1 | README de csound/csound | Não. Executável externo instalado pelo usuário. |
 | LilyPond | GPL-3.0 | lilypond.org/gpl.html | Não. Executável externo chamado como processo. |
-| **Abjad** | **GPL-3.0** (LICENSE do repositório; README "Abjad 3.31", exige Python 3.12+ e **LilyPond 2.25.26+**) | github.com/Abjad/abjad | **Pendente (decisão do usuário).** Se aprovado, entra como dependência (`uv add`), nunca como código copiado. |
+| **Abjad** | **GPL-3.0** (LICENSE do repositório; README "Abjad 3.31", exige Python 3.12+ e **LilyPond 2.25.26+**) | github.com/Abjad/abjad | **Aprovado pelo usuário (2026-11-11).** Entra como dependência (`uv add abjad`), nunca como código copiado. |
 | Patches `.omp` do Muschat | autoria do projeto | — | **Sim.** Só chamam funções das bibliotecas; nada de código GPL copiado. |
 
 **Divergência com a spec:** a spec supunha que o Abjad fosse MIT. **Ele é GPL-3.0.** Importar o Abjad em Python
 torna o Muschat, se for distribuído, um trabalho combinado sujeito à GPL-3.0. Para o projeto da disciplina isso é
-compatível se o Muschat for publicado sob GPL-3.0 (ou não for redistribuído). **Decisão do usuário antes do ticket
-05.**
+compatível se o Muschat for publicado sob GPL-3.0 (ou não for redistribuído). **Decisão (2026-11-11): o usuário
+aceitou a GPL-3.0 e o Abjad entrou no ticket 05.** Em testes, o LilyPond 2.26.0 (estável) atende ao mínimo de 2.25.26.
 
 ## Protótipo de ida e volta (pendente: precisa do usuário)
 

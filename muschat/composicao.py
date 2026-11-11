@@ -26,8 +26,8 @@ class Composicao:
     def atual(self) -> Versao | None:
         return None if self.indice is None else self.versoes[self.indice]
 
-    def adicionar(self, ir: MusicIR, resumo: str, experimento: dict) -> Versao:
-        versao = Versao(ir, resumo, experimento, self.indice)
+    def adicionar(self, ir: MusicIR, resumo: str, experimento: dict, *, anterior: int | None) -> Versao:
+        versao = Versao(ir, resumo, experimento, anterior)
         self.versoes.append(versao)
         self.indice = len(self.versoes) - 1
         return versao

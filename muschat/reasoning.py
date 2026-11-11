@@ -11,6 +11,8 @@ from pydantic import BaseModel, ValidationError
 from muschat import prompts
 from muschat.composicao import Composicao
 from muschat.notacao.modelo import Partitura, para_ir
+from muschat.musicir import MusicIR
+from muschat.notacao.lilypond import para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.tecnicas import TECNICAS
 from muschat.orquestrador import compor
@@ -46,6 +48,7 @@ class Exemplo:
     musicxml: str
     legenda: str
     origem: Literal["acervo", "gerado", "composicao"]
+    lilypond: dict[str, str] = field(default_factory=dict)  # grade e partes (.ly), só para a composição
 
 
 @dataclass(frozen=True)
@@ -125,8 +128,8 @@ def responder(
         composicao = composicao if composicao is not None else Composicao()  # sem sessão: vale só para este turno
         resultado = compor(pergunta_segura, composicao, gerador=gerador, chat=chat, modelo=modelo)
         operacao, v = resultado.resumo, resultado.versao
-        partituras = [Exemplo(v.ir.titulo, para_musicxml(v.ir), f"Composição da conversa — {v.resumo}", "composicao")
-                      ] if v else []
+        partituras = [Exemplo(v.ir.titulo, para_musicxml(v.ir), f"Composição da conversa — {v.resumo}", "composicao",
+                              _lilypond_ou_nada(v.ir))] if v else []
     else:
         partituras = _partituras(pergunta_segura, analise, trechos, gerador=gerador, chat=chat, modelo=modelo)
 
@@ -226,3 +229,11 @@ def _formatar(t: Trecho) -> str:
 
 def _atributo(valor: str) -> str:
     return _neutralizar(valor).replace('"', "'")
+
+
+def _lilypond_ou_nada(ir: MusicIR) -> dict[str, str]:
+    """Fontes LilyPond da composição; se o Abjad não conseguir escrever algo, a partitura segue só pelo Verovio."""
+    try:
+        return para_lilypond(ir)
+    except Exception:  # Abjad levanta tipos variados; a notação de reserva (MusicXML) já foi validada
+        return {}
