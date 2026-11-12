@@ -1,6 +1,5 @@
-"""Ferramentas dos procedimentos: seleção por voz/compasso, ids novos, figuras notáveis e tessituras."""
+"""Ferramentas dos procedimentos: seleção por voz/compasso, ids novos e figuras notáveis."""
 
-import unicodedata
 from collections.abc import Callable
 from fractions import Fraction
 
@@ -8,40 +7,8 @@ from muschat import musicir as ir
 from muschat.musicir import localizar, pedacos
 from muschat.plano import Selecao
 
-# instrumento -> (clave, tessitura em midicents); altura real (sem transposição)
-INSTRUMENTOS: dict[str, tuple[ir.Clave, tuple[int, int]]] = {
-    "violino": ("sol", (5500, 10300)),
-    "viola": ("do3", (4800, 9100)),
-    "violoncelo": ("fa", (3600, 7600)),
-    "contrabaixo": ("fa", (2800, 6700)),
-    "flauta": ("sol", (6000, 9600)),
-    "oboe": ("sol", (5800, 9100)),
-    "clarinete": ("sol", (5000, 9100)),
-    "fagote": ("fa", (3400, 7500)),
-}
 QUARTETO = ["violino", "violino", "viola", "violoncelo"]
 DINAMICAS: list[ir.Dinamica] = ["pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "ffff"]
-
-
-# shortcut: nome casado por substring ("violino I" -> violino); vira escolha por id quando o Registro existir
-def instrumento(nome: str) -> str:
-    chave = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode().lower()
-    for conhecido in sorted(INSTRUMENTOS, key=len, reverse=True):
-        if conhecido in chave:
-            return conhecido
-    raise ValueError(f"instrumento sem tessitura conhecida: {nome!r} (conhecidos: {', '.join(INSTRUMENTOS)})")
-
-
-def no_registro(altura: int, tessitura: tuple[int, int] | None) -> int:
-    """Sobe/desce oitavas até caber na tessitura (toda tessitura da tabela tem mais de uma oitava)."""
-    if tessitura is None:
-        return altura
-    grave, agudo = tessitura
-    while altura < grave:
-        altura += 1200
-    while altura > agudo:
-        altura -= 1200
-    return altura
 
 
 def exigir(atual: ir.MusicIR | None) -> ir.MusicIR:

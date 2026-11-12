@@ -6,7 +6,8 @@ from fractions import Fraction
 
 from muschat import musicir as ir
 from muschat.plano import Plano
-from muschat.procedimentos.comum import INSTRUMENTOS, QUARTETO, Grade, Ids, exigir, instrumento, no_registro
+from muschat.instrumentos import instrumento, no_registro
+from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir
 
 _DURACOES_SORTEADAS = [Fraction(1, 2), Fraction(3, 8), Fraction(1, 4), Fraction(1, 8)]
 
@@ -18,7 +19,8 @@ def serie_harmonica(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],
     prov = ir.Proveniencia(origem="algoritmo")
     partes = []
     for k, nome in enumerate(plano.instrumentos or QUARTETO, 1):
-        clave, tessitura = INSTRUMENTOS[instrumento(nome)]
+        inst = instrumento(nome)
+        clave, tessitura = inst.clave, inst.tessitura
         alturas = sorted({no_registro(a, tessitura) for a in parciais})
         eventos: list[ir.Evento] = []
         inicio = Fraction(0)

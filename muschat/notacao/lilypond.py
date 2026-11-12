@@ -26,10 +26,10 @@ VERSAO_MINIMA = (2, 25, 26)  # exigida pelo Abjad 3.31 (README do Abjad)
 _CLAVE = {"sol": "treble", "fa": "bass", "do3": "alto", "do4": "tenor", "percussao": "percussion"}
 _ACIDENTE = {Fraction(0): "", Fraction(1, 2): "qs", Fraction(1): "s", Fraction(3, 2): "tqs", Fraction(2): "ss",
              Fraction(-1, 2): "qf", Fraction(-1): "f", Fraction(-3, 2): "tqf", Fraction(-2): "ff"}
-_NOTEHEAD = {"x": "cross", "diamond": "harmonic", "circle-x": "xcircle"}
+_NOTEHEAD = {"x": "cross", "diamond": "harmonic", "circle-x": "xcircle", "triangle": "triangle"}
 _ARTICULACAO = {"accent": "accent", "strong-accent": "marcato", "staccato": "staccato",
                 "staccatissimo": "staccatissimo", "tenuto": "tenuto"}
-_TECHNICAL = {"snap-pizzicato": "snappizzicato"}
+_TECHNICAL = {"snap-pizzicato": "snappizzicato", "stopped": "stopped", "open": "open"}
 AVISO_SEM_LILYPOND = (
     "Partitura pelo Verovio (MusicXML): LilyPond não encontrado, então não há PDF da grade nem das partes, e "
     "oitavos de tom saem como quartos de tom com seta. Para a gravação profissional, instale o LilyPond "

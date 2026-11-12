@@ -214,3 +214,11 @@ def test_restricao_de_tessitura_pedida_usa_os_limites_dados(quarteto):
     assert violacoes and {v.parte for v in violacoes} == {"P1"} and all("6000–6100" in v.detalhe for v in violacoes)
     with pytest.raises(ValueError):
         Restricao(tipo="tessitura", grave=7000, agudo=6000)
+
+
+def test_aplicar_tecnicas_sorteia_uma_tecnica_por_nota(quarteto):
+    plano = Plano(objetivo="t", operacoes=[{"procedimento": "aplicar_tecnicas"}],
+                  tecnicas=["sul ponticello", "pizzicato", "col legno battuto"])
+    novo = CATALOGO["aplicar_tecnicas"].funcao(quarteto, plano, {"proporcao": 1}, random.Random(3))
+    usadas = [e.tecnicas for e in _notas(novo)]
+    assert all(len(t) == 1 for t in usadas) and len({t[0] for t in usadas}) == 3

@@ -169,10 +169,13 @@ muschat/procedimentos/    Python procedure catalog: generation (harmonic series,
                           (augmentation/diminution, permutation, tuplet subdivision), density and progressive
                           ramps (register, dynamics), techniques
 muschat/restricoes.py     constraint checker (range, forbidden interval, no unison, max density)
+muschat/instrumentos.py   orchestral instrument table: family, clef and sounding range (strings, woodwinds,
+                          brass, pitched and unpitched percussion, keyboards, harp, guitar, voices)
 muschat/notacao/lilypond.py  MusicIR -> Abjad -> LilyPond text; LilyPond detection and engraving (PDF/SVG)
 muschat/orquestrador.py   composition turn: plan -> catalog checks -> procedure -> preservation check -> version
 muschat/composicao.py     session composition: versions, undo, go back, compare
-muschat/notacao/          example schema -> MusicIR, technique table, MusicXML builder, Verovio renderer
+muschat/notacao/          example schema -> MusicIR, extended-technique table by instrument family, MusicXML
+                          builder, Verovio renderer
 tests/                    pytest suite
 ```
 

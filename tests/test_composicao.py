@@ -65,7 +65,7 @@ def test_alturas_sao_parciais_da_fundamental_dentro_da_tessitura():
     ir = _quarteto().atual.ir
     violoncelo = ir.partes[3]
     alturas = {a.midicents for e in violoncelo.vozes[0].eventos if isinstance(e, Nota) for a in e.alturas}
-    assert alturas and all(3600 <= a <= 7600 for a in alturas)
+    assert alturas and all(3600 <= a <= 8100 for a in alturas)
     assert all(a % 50 == 0 for a in alturas)  # quartos de tom por padrão
 
 
@@ -261,3 +261,21 @@ def test_plano_que_cria_e_transforma_na_mesma_operacao():
     r = _compor(Composicao(), plano)
     assert r.versao is not None, r.resumo
     assert any(v.quialteras for p in r.versao.ir.partes for v in p.vozes)
+
+
+@pytest.mark.parametrize("nome,clave,grave", [
+    ("clarone", "fa", 3400), ("Clarinete baixo", "fa", 3400), ("clarinete em Si bemol", "sol", 5000),
+    ("Saxofone alto", "sol", 4900), ("trompa", "fa", 3500), ("soprano", "sol", 6000),
+])
+def test_instrumentos_de_sopro_metais_e_vozes_tem_tessitura(nome, clave, grave):
+    r = _compor(Composicao(), _plano(instrumentos=["flauta", nome], parametros={"compassos": 2}))
+    assert r.versao is not None, r.resumo
+    parte = r.versao.ir.partes[1]
+    assert parte.clave == clave and parte.tessitura[0] == grave
+
+
+def test_planejador_recebe_os_instrumentos_aceitos():
+    g = GeradorFake(_plano())
+    compor("pedido", Composicao(), gerador=g, chat=ChatFake(), modelo="m")
+    sistema = g.chamadas[0].config.system_instruction
+    assert "clarone" in sistema and "violoncelo" in sistema

@@ -11,9 +11,10 @@ from muschat import prompts
 from muschat.composicao import Composicao, Versao
 from muschat.musicir import MusicIR, Proveniencia, comparar, localizar
 from muschat.notacao.musicxml import para_musicxml
-from muschat.notacao.tecnicas import TECNICAS
 from muschat.plano import Operacao, Parametro, Plano
 from muschat.procedimentos import CATALOGO, Procedimento
+from muschat.instrumentos import FAMILIAS, INSTRUMENTOS
+from muschat.notacao.tecnicas import tecnicas_da_familia
 from muschat.restricoes import verificar
 from muschat.seguranca import neutralizar
 
@@ -108,7 +109,12 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         model=modelo,
         contents=[*chat.get_history(), types.Content(role="user", parts=[types.Part(text=texto)])],
         config=types.GenerateContentConfig(
-            system_instruction=prompts.PLANO.format(catalogo=_catalogo_no_prompt(catalogo), tecnicas=", ".join(TECNICAS)),
+            system_instruction=prompts.PLANO.format(
+                catalogo=_catalogo_no_prompt(catalogo),
+                instrumentos="; ".join(f"{f}: {', '.join(n for n, i in INSTRUMENTOS.items() if i.familia == f)}"
+                                       for f in FAMILIAS),
+                tecnicas="; ".join(f"{f}: {', '.join(tecnicas_da_familia(f))}" for f in FAMILIAS),
+            ),
             temperature=0.2,
             response_mime_type="application/json",
             response_schema=Plano,

@@ -118,13 +118,16 @@ abaixo e preenche parâmetros dentro das faixas. Só existem estes procedimentos
 
 - operacoes: um ou mais procedimentos do catálogo, na ordem de execução; parâmetros como pares \
 nome/valor (omita um parâmetro para usar o padrão).
-- instrumentos: um nome por parte, em português ("violino", "viola", "violoncelo"...); quarteto de \
-cordas = ["violino", "violino", "viola", "violoncelo"]. Só para procedimentos que criam peça nova.
+- instrumentos: um nome por parte, só destes (por família) — {instrumentos}. Quarteto de cordas = \
+["violino", "violino", "viola", "violoncelo"]; clarone = clarinete baixo (não é o clarinete). Só \
+para procedimentos que criam peça nova.
 - selecao: onde a operação pode mexer, com os ids de <composicao_atual> (partes, vozes) e/ou a faixa \
 de compassos (1 = primeiro). "só o violoncelo" = a parte do violoncelo; "os compassos finais" = os \
 últimos compassos da composição; resolva "ele", "esse trecho" pelo histórico. Vazia = a peça \
 inteira. Tudo fora da seleção fica intacto.
-- tecnicas: nomes do grimório para aplicar_tecnicas: {tecnicas}.
+- tecnicas: nomes do grimório para aplicar_tecnicas, por família de instrumento — {tecnicas}. Escolha \
+técnicas que se toquem nos instrumentos do plano (aplicar_tecnicas sorteia, em cada parte, só as que \
+cabem na família dela).
 - semente: só se o usuário pedir uma semente específica.
 - Pedido estético subjetivo ("mais fragmentado", "menos previsível"): traduza em operações e \
 parâmetros concretos e escreva em hipoteses a tradução adotada, com os números (ex.: "fragmentado = \

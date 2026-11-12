@@ -4,6 +4,7 @@ import random
 from fractions import Fraction
 
 from muschat import musicir as ir
+from muschat.notacao.tecnicas import cabe
 from muschat.plano import Plano
 from muschat.procedimentos.comum import (
     DINAMICAS, Grade, Ids, com_alturas, exigir, interpolar, pausa, por_compasso, por_voz,
@@ -96,12 +97,23 @@ def dinamica_progressiva(atual: ir.MusicIR | None, plano: Plano, p: dict[str, fl
 
 
 def aplicar_tecnicas(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:
-    """As técnicas do plano (nomes do grimório) em uma proporção sorteada das notas selecionadas."""
+    """Uma das técnicas do plano (nomes do grimório), sorteada, em cada nota sorteada da seleção: técnicas
+    diferentes não se empilham na mesma nota (slap + whistle tone + multifônico não se tocam juntos)."""
     if not plano.tecnicas:
         raise ValueError("aplicar_tecnicas precisa de técnicas no plano (campo tecnicas)")
 
-    def trecho(parte: ir.Parte, voz: ir.Voz, alvo: list[ir.Evento]) -> list[ir.Evento]:
-        return [e.model_copy(update={"tecnicas": list(dict.fromkeys([*e.tecnicas, *plano.tecnicas]))})
-                if isinstance(e, ir.Nota) and rng.random() < p["proporcao"] else e for e in alvo]
+    atual = exigir(atual)
 
-    return por_voz(exigir(atual), plano.selecao, trecho)
+    def cabem(parte: ir.Parte) -> list[str]:
+        """Técnicas do plano que se tocam neste instrumento (família e, se for o caso, o instrumento exato)."""
+        return [t for t in plano.tecnicas if cabe(t, parte.instrumento)]
+
+    if not any(cabem(parte) for parte in atual.partes):
+        raise ValueError(f"nenhuma das técnicas {plano.tecnicas} se toca nos instrumentos da composição")
+
+    def trecho(parte: ir.Parte, voz: ir.Voz, alvo: list[ir.Evento]) -> list[ir.Evento]:
+        possiveis = cabem(parte)
+        return [e.model_copy(update={"tecnicas": [rng.choice(possiveis)]})
+                if possiveis and isinstance(e, ir.Nota) and rng.random() < p["proporcao"] else e for e in alvo]
+
+    return por_voz(atual, plano.selecao, trecho)
