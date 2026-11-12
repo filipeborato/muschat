@@ -1,8 +1,12 @@
 """Muschat: UI do chat em Streamlit."""
 
+import io
 import os
 import re
+from collections import Counter
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
+import zipfile
 from pathlib import Path
 
 import streamlit as st
@@ -11,12 +15,23 @@ from google import genai
 from google.genai import types
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from muschat.composicao import Composicao
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
+from muschat.exportacao import PERDAS, experimento_json, metricas, pacote, para_midi
+from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar
+from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
+from muschat.orquestrador import descartar, reaplicar, retomar
+from muschat.procedimentos import CATALOGO
 from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
-from muschat.reasoning import responder
+from muschat.reasoning import exemplo_da_versao, responder
+from muschat.registro import NOME_DO_MOTOR, ROTULO_DO_ESTADO, Registro
+from muschat.registro import detectar as detectar_registro
+from muschat.roteador import MODOS
+from muschat.openmusic import detectar_openmusic
+from muschat.musicir import MusicIR
 
 load_dotenv()  # .env opcional; não sobrescreve variáveis já definidas
 
@@ -67,16 +82,195 @@ def _novo_chat():
 def _nova_conversa():
     st.session_state.chat = _novo_chat()
     st.session_state.messages = []
+    st.session_state.composicao = Composicao()
 
 
-if "chat" not in st.session_state:
+if "chat" not in st.session_state or "composicao" not in st.session_state:
     _nova_conversa()
 
 st.sidebar.button("Nova conversa", on_click=_nova_conversa, width="stretch")
+
+
+@st.cache_resource(show_spinner=False)
+def _lilypond(configurado: str | None) -> Lilypond | None:
+    return detectar(configurado)
+
+
+@st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar algo aparece em até 5 min
+def _registro(openmusic_ativo: bool = cfg.openmusic_ativo) -> Registro:
+    try:
+        abjad_versao: str | None = version("abjad")
+    except PackageNotFoundError:
+        abjad_versao = None
+    return detectar_registro(lilypond=_lilypond(os.environ.get("LILYPOND")),
+                             openmusic=(detectar_openmusic(os.environ.get("OPENMUSIC")) if openmusic_ativo else None),
+                             abjad_versao=abjad_versao, openmusic_ativo=openmusic_ativo)
+
+
+_ICONE = {"automatico": "🟢", "intercambio_arquivos": "🟡", "manual": "🟠", "indisponivel": "⚪"}
+
+modos = list(MODOS) if cfg.openmusic_ativo else ["automatico", "python"]
+if st.session_state.get("modo") not in modos:
+    st.session_state.modo = "automatico"
+st.sidebar.radio("Motor", modos, format_func=MODOS.__getitem__, key="modo", horizontal=True,
+                 help="Automático escolhe por regras explícitas; os outros são respeitados ou recusados com o motivo.")
+with st.sidebar.expander("Motores e bibliotecas"):
+    for cap in _registro().capacidades:
+        versao = f" {cap.versao}" if cap.versao else ""
+        st.markdown(f"{_ICONE[cap.estado]} **{cap.nome}**{versao} · {ROTULO_DO_ESTADO[cap.estado]}")
+        st.caption(cap.motivo)
 retriever, aviso_indice = _retriever(cfg.api_key, cfg.embed_model)
 if aviso_indice:
     _retriever.clear()  # não cacheia a falha: após a ingestão, o próximo rerun já acha o índice
     st.sidebar.caption(f"⚠️ {aviso_indice} Respostas sem base no acervo.")
+
+
+def _secao_pendente(c: Composicao):
+    """Etapa assistida do OpenMusic: o fluxo está parado esperando o compositor."""
+    p = c.pendente
+    if p is None or p.tarefa is None:
+        return
+    with st.sidebar.container(border=True):
+        st.warning(f"⏳ Aguardando você: etapa {p.etapa + 1} de {len(p.decisao.etapas)} no OpenMusic")
+        for k, e in enumerate(p.decisao.etapas):
+            estado = "feita" if k < p.etapa else "aguardando você" if k == p.etapa else "pendente"
+            st.caption(f"{k + 1}. {e.procedimento} · {NOME_DO_MOTOR[e.motor]} · {estado}")
+        with st.expander("Instruções"):
+            st.markdown(p.tarefa.instrucoes())
+        st.download_button("baixar tarefa (.zip)", data=p.tarefa.pacote(), file_name=f"{p.tarefa.id}.zip",
+                           mime="application/zip", on_click="ignore", width="stretch")
+        saida = st.file_uploader("saida.txt do OpenMusic", type=["txt"], key=f"saida-{p.tarefa.id}")
+        if st.button("Importar e continuar", disabled=saida is None, width="stretch", type="primary"):
+            assert saida is not None
+            resultado = retomar(c, saida.getvalue())
+            if resultado.versao:
+                st.session_state.messages.append({"role": "assistant", "content": resultado.resumo,
+                                                  "partituras": [asdict(exemplo_da_versao(resultado.versao))]})
+                st.rerun()
+            st.error(resultado.resumo)
+        st.button("Descartar tarefa", on_click=descartar, args=(c,), width="stretch")
+
+
+def _inspecao(c: Composicao):
+    assert c.atual is not None
+    exp = c.atual.experimento
+    for k, e in enumerate(exp.get("etapas", []), 1):
+        st.caption(f"{k}. {e['procedimento']} · {NOME_DO_MOTOR.get(e['motor'], e['motor'])} · {e['estado']}")
+    with st.expander("Inspeção técnica"):
+        for linha in exp.get("decisao", {}).get("justificativa", []):
+            st.markdown(f"- {linha}")
+        anterior = c.versoes[c.atual.anterior].ir if c.atual.anterior is not None else None
+        st.markdown("**Métricas descritivas** (descrição do material, não avaliação estética)")
+        st.json(metricas(c.atual.ir, anterior=anterior, violacoes=exp.get("violacoes", [])), expanded=False)
+        st.json({k: v for k, v in exp.items() if k != "intermediarios"}, expanded=False)
+        for k, dump in enumerate(exp.get("intermediarios", []), 1):
+            st.download_button(f"intermediário da etapa {k} (.musicxml)",
+                               data=para_musicxml(MusicIR.model_validate(dump)),
+                               file_name=f"etapa_{k}.musicxml", mime="application/vnd.recordare.musicxml+xml",
+                               key=f"inter-{c.indice}-{k}", on_click="ignore")
+
+
+def _arquivo_json(c: Composicao):
+    """Salvar e abrir a composição (Versões + etapa pendente) em JSON."""
+    with st.popover("Arquivo da composição (.json)", width="stretch"):
+        st.download_button("salvar composição", data=c.para_json, file_name="composicao.json",
+                           mime="application/json", on_click="ignore", width="stretch",
+                           disabled=not c.versoes and c.pendente is None)
+        st.download_button("dados do experimento", data=lambda m=_motores(): experimento_json(c, motores=m),
+                           file_name="experimento.json", mime="application/json", on_click="ignore",
+                           width="stretch", disabled=not c.versoes)
+        st.caption(PERDAS["json"])
+        arquivo = st.file_uploader("abrir composição", type=["json"], key="abrir-composicao")
+        if arquivo is not None and st.button("Abrir (substitui a atual)", width="stretch"):
+            try:
+                st.session_state.composicao = Composicao.de_json(arquivo.getvalue().decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:  # pydantic.ValidationError é ValueError
+                st.error(f"Arquivo recusado: {str(exc).splitlines()[0]}")
+            else:
+                st.rerun()
+
+
+def _secao_composicao(c: Composicao):
+    _secao_pendente(c)
+    with st.sidebar.expander("Composição", expanded=c.atual is not None or c.pendente is not None):
+        _arquivo_json(c)
+        if c.atual is None or c.indice is None:
+            st.caption("Nenhuma composição ainda. Peça, por exemplo: \"crie oito compassos para quarteto de cordas "
+                       "a partir de parciais harmônicos\".")
+            return
+        st.markdown(f"**Versão atual: {c.indice + 1}**  \n{c.atual.resumo}")
+        _inspecao(c)
+        st.button("Desfazer", on_click=c.desfazer, disabled=c.atual.anterior is None, width="stretch")
+        _ajustar(c)
+        _exportar(c)
+        nomes = [f"{i + 1} · {v.experimento['operacao']} · {v.data:%H:%M} · {v.resumo.partition(': ')[2][:50]}"
+                 for i, v in enumerate(c.versoes)]
+        escolhida = st.selectbox("Versões", range(len(nomes)), index=c.indice, format_func=nomes.__getitem__)
+        st.button("Voltar a esta versão", on_click=c.voltar, args=(escolhida,), disabled=escolhida == c.indice,
+                  width="stretch")
+        if len(c.versoes) > 1:
+            de = st.selectbox("Comparar de", range(len(nomes)), index=max(c.indice - 1, 0),
+                              format_func=lambda i: str(i + 1))
+            para = st.selectbox("até", range(len(nomes)), index=c.indice, format_func=lambda i: str(i + 1))
+            dif = c.comparar(de, para)
+            st.markdown(f"{len(dif.adicionados)} adicionados · {len(dif.removidos)} removidos · "
+                        f"{len(dif.alterados)} alterados" if dif else "Sem diferenças.")
+            por_local = Counter(dif.locais.values())  # (parte, compasso) -> eventos mudados
+            for parte in sorted({p for p, _ in por_local}):
+                st.caption(f"{parte}: " + ", ".join(f"c.{n} ({k})" for (p, n), k in sorted(por_local.items()) if p == parte))
+
+
+def _motores() -> dict[str, str]:
+    """Versões dos motores externos detectados (só os presentes) para o JSON do experimento."""
+    return {cap.nome: cap.versao for cap in _registro().capacidades
+            if cap.versao and cap.estado != "indisponivel" and cap.nome != "Abjad"}
+
+
+def _exportar(c: Composicao):
+    """Downloads da Versão atual, cada um com o que o formato perde."""
+    assert c.atual is not None and c.indice is not None
+    ir, i, nome = c.atual.ir, c.indice, f"composicao_v{c.indice + 1}"
+    lilypond = exemplo_da_versao(c.atual).lilypond
+    gravacao = _gravar(tuple(lilypond.items())) if lilypond else None  # em cache: a mesma do chat
+    svg = None if gravacao and gravacao.pdfs else _svg(para_musicxml(ir))
+    motores = _motores()  # no script: o callable do download roda em outra thread, sem acesso ao cache do app
+    with st.popover("Exportar", width="stretch"):
+        st.download_button("composição completa (.zip)", file_name=f"{nome}.zip", mime="application/zip",
+                           data=lambda: pacote(c, i, lilypond=lilypond, gravacao=gravacao, svg=svg,
+                                               motores=motores),
+                           on_click="ignore", width="stretch", type="primary")
+        st.caption("PDF/.ly só se o LilyPond gravou; SVG do LilyPond ou, sem ele, do Verovio; MusicXML, MIDI, "
+                   "JSONs e PERDAS.txt sempre. Cada formato perde o que está descrito abaixo e em PERDAS.txt.")
+        st.download_button("MusicXML", data=lambda: para_musicxml(ir), file_name=f"{nome}.musicxml",
+                           mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
+        st.caption(PERDAS["musicxml"])
+        st.download_button("MIDI", data=lambda: para_midi(ir), file_name=f"{nome}.mid", mime="audio/midi",
+                           on_click="ignore", width="stretch")
+        st.caption(PERDAS["midi"])
+        if lilypond:
+            st.caption(PERDAS["lilypond"])
+
+
+def _ajustar(c: Composicao):
+    """Hipótese operacional editável: muda um parâmetro e refaz a operação da Versão atual, sem chamar o modelo."""
+    assert c.atual is not None and c.indice is not None
+    exp = c.atual.experimento
+    with st.popover("Ajustar parâmetros e reaplicar", width="stretch"):
+        for h in exp["plano"]["hipoteses"]:
+            st.caption(f"Hipótese: {h}")
+        novos = []
+        for k, (nome, params) in enumerate(zip(exp["procedimentos"], exp["parametros"])):
+            faixas = CATALOGO[nome].parametros
+            st.markdown(f"`{nome}`" + ("" if faixas else " (sem parâmetros)"))
+            novos.append({p: float(st.number_input(
+                f"{p} ({faixas[p].unidade or faixas[p].descricao})", min_value=float(faixas[p].minimo),
+                max_value=float(faixas[p].maximo), value=float(v), step=1.0 if faixas[p].inteiro else 0.05,
+                key=f"ajuste-{c.indice}-{k}-{p}")) for p, v in params.items()})
+        if st.button("Reaplicar", width="stretch", key=f"reaplicar-{c.indice}"):
+            resultado = reaplicar(c, novos, registro=_registro())
+            (st.toast if resultado.versao else st.error)(resultado.resumo)
+            if resultado.versao:
+                st.rerun()
 
 
 @st.cache_data(max_entries=64, show_spinner=False)
@@ -84,14 +278,43 @@ def _svg(musicxml: str) -> str | None:
     return svg_de(musicxml)
 
 
+@st.cache_data(max_entries=16, show_spinner="Gravando a partitura com o LilyPond...")
+def _gravar(fontes: tuple[tuple[str, str], ...]) -> Gravacao:
+    return gravar(dict(fontes), _lilypond(os.environ.get("LILYPOND")))
+
+
+def _nome_arquivo(texto: str) -> str:
+    return re.sub(r"[^\w-]+", "_", texto).strip("_")[:60] or "partitura"
+
+
 def _render_partituras(partituras: list[dict], chave: str):
     for i, p in enumerate(partituras):
         st.caption(p["legenda"])
-        if svg := _svg(p["musicxml"]):
-            st.image(svg, width="stretch")  # <img>: o SVG não executa script
+        nome = _nome_arquivo(p["titulo"])
+        gravacao = _gravar(tuple(p["lilypond"].items())) if p.get("lilypond") else None
+        if gravacao and gravacao.svgs:
+            for pagina in gravacao.svgs:
+                st.image(pagina, width="stretch")  # <img>: o SVG não executa script
+        elif svg := _svg(p["musicxml"]):
+            st.image(svg, width="stretch")
         else:
             st.code(p["musicxml"], language="xml")
-        nome = re.sub(r"[^\w-]+", "_", p["titulo"]).strip("_")[:60] or "partitura"
+        if gravacao and gravacao.aviso:
+            st.caption(f"⚠️ {gravacao.aviso}")
+        if p.get("lilypond"):
+            colunas = st.columns(2)
+            fontes_ly = io.BytesIO()
+            with zipfile.ZipFile(fontes_ly, "w", zipfile.ZIP_DEFLATED) as z:
+                for fonte, texto in p["lilypond"].items():
+                    z.writestr(f"{nome}_{_nome_arquivo(fonte)}.ly", texto)
+            colunas[0].download_button(".ly da grade e das partes (.zip)", data=fontes_ly.getvalue(),
+                                       file_name=f"{nome}_lilypond.zip", mime="application/zip",
+                                       key=f"ly-{chave}-{i}", on_click="ignore")
+            for k, (fonte, pdf) in enumerate((gravacao.pdfs if gravacao else {}).items()):
+                colunas[(k + 1) % 2].download_button(
+                    f"PDF {'da grade' if fonte == 'grade' else fonte}", data=pdf,
+                    file_name=f"{nome}_{_nome_arquivo(fonte)}.pdf", mime="application/pdf",
+                    key=f"pdf-{chave}-{i}-{k}", on_click="ignore")
         st.download_button(
             "baixar .musicxml",
             data=p["musicxml"],
@@ -131,6 +354,9 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                     chat=st.session_state.chat,
                     retriever=retriever,
                     modelo=cfg.model,
+                    composicao=st.session_state.composicao,
+                    modo=st.session_state.modo,
+                    registro=_registro(),
                 )
         except Exception as exc:
             if (erro := mensagem_de_erro(exc)) is None:
@@ -149,3 +375,5 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
             }
             _render(msg, str(len(st.session_state.messages) + 1))  # mesma chave que terá no histórico
             st.session_state.messages += [{"role": "user", "content": pergunta}, msg]
+
+_secao_composicao(st.session_state.composicao)  # no fim: já reflete a Versão criada neste turno

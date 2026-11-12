@@ -2,7 +2,9 @@ import json
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 
+from muschat.composicao import Composicao
 from muschat.notacao.modelo import Partitura
+from muschat.plano import Plano
 from muschat.reasoning import Trecho, responder
 from tests.test_reasoning import ANALISE_OK, FakeChat, FakeRetriever
 
@@ -134,3 +136,42 @@ def test_partitura_gerada_e_limitada_a_8_compassos():
     longa = {**PARTITURA, "compassos": PARTITURA["compassos"] * 12}
     resp, g, c = _rodar("gerar", json.dumps(longa))
     assert len(list(ET.fromstring(resp.partituras[0].musicxml).iter("measure"))) == 8
+
+
+PLANO = {"objetivo": "quarteto", "instrumentos": ["violino", "violino", "viola", "violoncelo"],
+         "operacoes": [{"procedimento": "serie_harmonica", "parametros": [{"nome": "compassos", "valor": 8}]}],
+         "semente": 1}
+
+
+def _compor(analise_notacao, *extras, composicao=None):
+    log = []
+    g = GeradorSequencial(log, json.dumps({**ANALISE_OK, "notacao": analise_notacao}), *extras)
+    c = FakeChat(log)
+    resp = responder("crie oito compassos", gerador=g, chat=c, retriever=FakeRetriever(log), modelo="m",
+                     composicao=composicao)
+    return resp, g, c
+
+
+def test_pedido_de_composicao_grava_versao_e_mostra_a_partitura_com_o_resumo():
+    composicao = Composicao()
+    resp, g, c = _compor("compor", json.dumps(PLANO), composicao=composicao)
+    assert len(g.chamadas) == 2 and g.chamadas[1].config.response_schema is Plano
+    assert composicao.atual is not None and len(composicao.atual.ir.partes) == 4
+    [partitura] = resp.partituras
+    assert partitura.origem == "composicao" and partitura.musicxml.count("<score-part ") == 4
+    assert "serie_harmonica" in _sistema(c) and composicao.atual.resumo in _sistema(c)
+
+
+def test_plano_recusado_chega_a_sintese_sem_partitura():
+    composicao = Composicao()
+    resp, g, c = _compor("compor", json.dumps({**PLANO, "operacoes": [{"procedimento": "rm -rf"}]}),
+                         composicao=composicao)
+    assert resp.partituras == [] and composicao.atual is None
+    assert "recusada" in _sistema(c)
+
+
+def test_pergunta_comum_nao_passa_pelo_orquestrador():
+    composicao = Composicao()
+    resp, g, c = _compor("nenhuma", composicao=composicao)
+    assert len(g.chamadas) == 1 and composicao.versoes == []
+    assert "<operacao>\nnenhuma\n</operacao>" in _sistema(c)

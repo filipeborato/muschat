@@ -2,14 +2,15 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from muschat.notacao.modelo import Compasso, Nota, Partitura
+from muschat.notacao.modelo import Compasso, Nota, Partitura, para_ir
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
+from tests.exemplos import quarteto
 
 
 def _partitura(*compassos, **kw):
     base = dict(titulo="Exemplo", instrumento="Violino", clave="sol", metrica="4/4", andamento=60)
-    return Partitura(**{**base, **kw}, compassos=[Compasso(notas=list(c)) for c in compassos])
+    return para_ir(Partitura(**{**base, **kw}, compassos=[Compasso(notas=list(c)) for c in compassos]))
 
 
 def _notas(xml: str) -> list[ET.Element]:
@@ -195,3 +196,36 @@ def test_dinamica_repetida_nao_e_reescrita():
         [Nota(alturas=["E5"], duracao="minima", dinamica="p"), Nota(alturas=["F5"], duracao="minima", dinamica="f")],
     ))
     assert [d[0].tag for d in ET.fromstring(xml).iter("dynamics")] == ["p", "f"]
+
+
+def test_musicir_de_duas_partes_com_vozes_e_tercina_renderiza_no_verovio():
+    raiz = ET.fromstring(xml := para_musicxml(quarteto()))
+    assert [p.findtext("part-name") for p in raiz.iter("score-part")] == ["Violino", "Violoncelo"]
+    vln, vc = raiz.findall("part")
+    assert vln.findtext(".//pitch/step") == "A" and vln.findtext(".//pitch/alter") == "0.5"
+    assert vc.findtext("measure/attributes/clef/sign") == "F"
+    tercina = [n for n in vc.iter("note") if n.find("time-modification") is not None]
+    assert [n.findtext("type") for n in tercina] == ["quarter"] * 3
+    assert {n.findtext("time-modification/actual-notes") for n in tercina} == {"3"}
+    assert [t.get("type") for n in tercina for t in n.iter("tuplet")] == ["start", "stop"]
+    assert {n.findtext("voice") for n in vc.iter("note")} == {"1"}  # curva/espectral não viram notas falsas
+    svg = svg_de(xml)
+    assert svg is not None and svg.count("<g") > 10
+
+
+def test_notas_sem_grafia_usam_sustenido_e_grafia_forca_a_letra():
+    from fractions import Fraction as F
+
+    from muschat.musicir import Altura, Compasso as C, MusicIR, Nota as N, Parte, Proveniencia, Voz
+
+    def nota(i, mc, grafia=None):
+        return N(id=f"n{i}", inicio=F(i, 4), duracao=F(1, 4), alturas=[Altura(midicents=mc, grafia=grafia)],
+                 proveniencia=Proveniencia(origem="algoritmo"))
+
+    ir = MusicIR(titulo="t", compassos=[C(numerador=4, denominador=4)], partes=[Parte(
+        id="P1", instrumento="Flauta", vozes=[Voz(id="v", eventos=[
+            nota(0, 6100), nota(1, 6100, "D"), nota(2, 6150), nota(3, 6025)])])])
+    passos = [(n.findtext("pitch/step"), n.findtext("pitch/alter"), n.findtext("accidental"))
+              for n in _notas(para_musicxml(ir))]
+    assert passos == [("C", "1", "sharp"), ("D", "-1", "flat"), ("C", "1.5", "three-quarters-sharp"),
+                      ("C", "0.25", "natural-up")]

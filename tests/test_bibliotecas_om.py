@@ -1,0 +1,304 @@
+"""Tickets 12–15: Chaos, Situation, OMChroma/Csound e OM-SuperVP pela ponte assistida (executor fake: a saída do
+OpenMusic é escrita à mão; o teste real roda só onde a biblioteca está instalada)."""
+
+from dataclasses import replace
+from fractions import Fraction as F
+from pathlib import Path
+
+from muschat.musicir import Nota
+from muschat.openmusic import PATCHES, InstalacaoOM
+from muschat.orquestrador import retomar
+from muschat.registro import detectar
+from tests.test_composicao import _plano, _quarteto
+from tests.test_motores import _rodar
+
+LIBS = {n: Path(f"C:/OM/Libraries/{n}") for n in ("esquisse", "chaos", "situation", "om2csound", "omchroma")}
+OM = InstalacaoOM(Path("C:/OM/OM 8.0.exe"), "8.0", LIBS)
+APROVADOS = {nome: replace(p, arquivo=p.arquivo or __file__, validado=True) for nome, p in PATCHES.items()}
+COM_LIBS = detectar(lilypond=None, openmusic=OM, abjad_versao="3.31", which=lambda e: f"C:/bin/{e}.exe",
+                    patches=APROVADOS)
+
+
+def _verhulst(x0: float, lam: float, n: int) -> list[float]:
+    """A fórmula da documentação da Chaos (orbitals.lisp): x(n) = x(n-1) + lambda * x(n-1) * (1 - x(n-1))."""
+    xs = [x0]
+    for _ in range(n):
+        xs.append(xs[-1] + lam * xs[-1] * (1 - xs[-1]))
+    return xs
+
+
+def _ataques(ir, parte: int, compasso: int) -> int:
+    inicio = ir.inicios()[compasso - 1]
+    fim = inicio + ir.compassos[compasso - 1].comprimento
+    return sum(1 for v in ir.partes[parte].vozes for e in v.eventos
+               if isinstance(e, Nota) and inicio <= e.inicio < fim)
+
+
+# --- 12: Chaos -----------------------------------------------------------------------------------------------------
+
+def test_chaos_verhulst_controla_a_densidade_de_cada_compasso(tmp_path):
+    c = _quarteto(4)
+    plano = _plano("densidade_caotica", {"x0": 0.1, "turbulencia": 2.8, "minimo": 0, "maximo": 2})
+    c, r, _ = _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=c, pasta=tmp_path)
+    assert r.tarefa is not None, r.resumo
+    assert (Path(r.tarefa.pasta) / "entrada.txt").read_text() == "0.1 2.8 3\n"  # 4 compassos = 3 iterações
+    valores = _verhulst(0.1, 2.8, 3)  # 0.1, 0.352, 0.9907, 1.0166: mínimo no c.1, máximo no c.4
+    r2 = retomar(c, " ".join(f"{v:.6f}" for v in valores))
+    v = r2.versao
+    assert v is not None, r2.resumo
+    for parte in range(4):
+        assert _ataques(v.ir, parte, 1) == 0  # mínimo da série -> 0 ataques por semínima
+        assert _ataques(v.ir, parte, 4) == 8  # máximo -> 2 ataques por semínima em 4/4
+    assert v.experimento["etapas"][0]["motor"] == "openmusic"
+
+
+def test_chaos_saida_com_quantidade_errada_e_recusada(tmp_path):
+    c = _quarteto(4)
+    plano = _plano("densidade_caotica", {"x0": 0.1, "turbulencia": 2.8})
+    c, r, _ = _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=c, pasta=tmp_path)
+    r2 = retomar(c, "0.1 0.3")
+    assert r2.versao is None and "4 valores" in r2.resumo and c.pendente is not None
+
+
+# --- 13: Situation ---------------------------------------------------------------------------------------------------
+
+def _situation(tmp_path, base=5500, passo=100):
+    plano = _plano("distribuir_restricoes", {"alturas": 12, "base": base, "passo": passo})
+    return _rodar(plano, modo="openmusic", registro=COM_LIBS, pasta=tmp_path)
+
+
+def test_situation_entrada_tem_um_dominio_por_vaga_e_a_solucao_vira_quarteto(tmp_path):
+    c, r, _ = _situation(tmp_path)
+    linhas = (Path(r.tarefa.pasta) / "entrada.txt").read_text().splitlines()
+    assert linhas[0] == "12" and len(linhas) == 13
+    assert linhas[4].split()[:2] == ["12", "5500"]  # vaga 3 = violoncelo: alcança as 12 alturas de 5500 a 6600
+    solucao = [5500 + 100 * k for k in range(12)]  # vagas na ordem: cada altura uma vez, todas na tessitura
+    v = retomar(c, " ".join(map(str, solucao))).versao
+    assert v is not None and [p.instrumento for p in v.ir.partes] == ["Violino", "Violino", "Viola", "Violoncelo"]
+    assert len(v.ir.compassos) == 3
+    assert [e.alturas[0].midicents for e in v.ir.partes[3].vozes[0].eventos] == [5800, 6200, 6600]
+
+
+def test_situation_solucao_que_viola_restricao_e_rejeitada_com_o_local(tmp_path):
+    c, r, _ = _situation(tmp_path, base=5000)  # 5000–6100: tem solução (violinos alcançam 7 para 6 vagas)
+    ruim = [5000 + 100 * k for k in range(12)]  # vaga 0 (violino, c.1) com 5000: abaixo do Sol 3
+    r2 = retomar(c, " ".join(map(str, ruim)))
+    assert r2.versao is None and "tessitura" in r2.resumo and "P1 c.1" in r2.resumo and c.pendente is not None
+    repetida = [5500 + 100 * k for k in range(12)]
+    repetida[1] = repetida[0]
+    c, r, _ = _situation(tmp_path)
+    r3 = retomar(c, " ".join(map(str, repetida)))
+    assert r3.versao is None and "c.1" in r3.resumo and ("uníssono" in r3.resumo or "repetida" in r3.resumo)
+
+
+def test_situation_sem_solucao_lista_as_condicoes_e_nao_vai_ao_openmusic(tmp_path):
+    c, r, _ = _situation(tmp_path, base=4800)  # 4800–5900: violinos alcançam só 5500–5900 (5) para 6 vagas
+    assert r.tarefa is None and c.pendente is None and not any(tmp_path.iterdir())  # nada enviado ao OM
+    assert "sem solução" in r.resumo and "sem uníssono" in r.resumo and "Violino: 3 vagas" in r.resumo
+    assert "Violino + Violino alcançam 5 alturas para 6 vagas" in r.resumo
+
+
+def test_situation_que_devolve_menos_um_lista_as_condicoes(tmp_path):
+    c, r, _ = _situation(tmp_path)
+    r2 = retomar(c, "-1")
+    assert r2.versao is None and "não achou solução" in r2.resumo and "Violoncelo: 3 vagas" in r2.resumo
+
+
+def test_patch_que_falhou_no_openmusic_mostra_o_erro_txt(tmp_path):
+    c, r, _ = _situation(tmp_path)
+    (Path(r.tarefa.pasta) / "erro.txt").write_text("Undefined function CSOLVER", encoding="utf-8")
+    r2 = retomar(c, "-2")
+    assert r2.versao is None and "Undefined function CSOLVER" in r2.resumo and c.pendente is not None
+
+
+# --- 14: OMChroma + Csound -------------------------------------------------------------------------------------------
+
+def test_sintese_envia_parciais_e_acrescenta_parte_eletronica_sem_notas(tmp_path):
+    c = _quarteto(2)
+    notas_antes = [e for _, _, e in c.atual.ir.eventos() if isinstance(e, Nota)]
+    plano = _plano("sintese_aditiva", {"parciais_inicial": 1, "parciais_final": 3, "amplitude": -18})
+    c, r, _ = _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=c, pasta=tmp_path)
+    assert r.tarefa is not None, r.resumo
+    entrada = (Path(r.tarefa.pasta) / "entrada.txt").read_text().splitlines()
+    n = int(entrada[0])
+    assert n == len(entrada) - 1 and len(notas_antes) <= n <= 3 * len(notas_antes)
+    t, d, f, a = map(float, entrada[1].split())
+    assert t == 0 and d > 0 and f > 20 and a == -18  # primeira nota: fundamental a -18 dB
+    v = retomar(c, str(n)).versao
+    assert v is not None
+    eletronica = v.ir.partes[-1]
+    assert eletronica.instrumento == "Eletrônica (síntese aditiva)"
+    assert "muschat.orc" in eletronica.vozes[0].eventos[0].descricao  # sem .orc/.sco: diz por que não há áudio
+    eventos = [e for voz in eletronica.vozes for e in voz.eventos]
+    assert {e.tipo for e in eventos} == {"eletronico", "curva"}  # nunca nota falsa
+    assert v.ir.partes[:4] == c.versoes[0].ir.partes  # as partes instrumentais não mudam
+
+
+def test_registro_e_render_usam_o_mesmo_csound(monkeypatch):
+    monkeypatch.setenv("CSOUND", "D:/csound/bin/csound.exe")
+    reg = detectar(lilypond=None, openmusic=OM, abjad_versao="3.31", which=lambda e: None, patches=APROVADOS)
+    assert reg.capacidade("Csound").estado == "automatico" and "D:/csound" in reg.capacidade("Csound").motivo
+
+
+def test_patch_sem_arquivo_nao_vira_tarefa(tmp_path):
+    import pytest
+    from muschat.openmusic import criar_tarefa
+    with pytest.raises(ValueError):
+        criar_tarefa("analise_supervp", {"parciais": 4, "quadros": 2}, raiz=tmp_path)
+    assert not any(tmp_path.iterdir())
+
+
+def test_saidas_reais_do_openmusic_importam(tmp_path):
+    """Teste condicional real: as saídas gravadas pelo OM 8.0 na validação (docs/pesquisa/evidencias-openmusic)."""
+    evid = Path("docs/pesquisa/evidencias-openmusic")
+    chaos = [float(x) for x in (evid / "chaos-saida.txt").read_text().split()]
+    assert chaos == [round(v, 10) for v in _verhulst(0.1, 2.8, 3)]
+    c, r, _ = _situation(tmp_path)
+    v = retomar(c, (evid / "situation-saida.txt").read_text()).versao
+    assert v is not None and len({e.alturas[0].midicents for p in v.ir.partes for e in p.vozes[0].eventos}) == 12
+
+
+def test_csound_ausente_ou_sem_arquivos_nao_gera_audio_e_diz_por_que(tmp_path):
+    from muschat.patches_om import renderizar
+    assert "não deixou muschat.orc" in renderizar(tmp_path, "csound")
+    (tmp_path / "muschat.orc").write_text("")
+    (tmp_path / "muschat.sco").write_text("")
+    assert "Csound não encontrado" in renderizar(tmp_path, None)
+
+
+_ORC = "sr = 44100\nksmps = 32\nnchnls = 1\n0dbfs = 1\ninstr 1\na1 poscil 0.1, p4\nout a1\nendin\n"
+
+
+def test_csound_real_renderiza_orc_e_sco(tmp_path):
+    import pytest
+    from muschat.patches_om import csound, renderizar
+    if csound() is None:
+        pytest.skip("Csound não instalado")
+    (tmp_path / "muschat.orc").write_text(_ORC)
+    (tmp_path / "muschat.sco").write_text("i1 0 0.2 440\n")
+    assert renderizar(tmp_path, csound()).startswith("áudio: muschat.wav"), renderizar(tmp_path, csound())
+    assert (tmp_path / "muschat.wav").stat().st_size > 1000
+
+
+# --- 15: OM-SuperVP --------------------------------------------------------------------------------------------------
+
+COM_SUPERVP = detectar(lilypond=None, openmusic=InstalacaoOM(OM.executavel, "8.0", {**LIBS, "om-supervp": Path("x")}),
+                       abjad_versao="3.31", which=lambda e: f"C:/bin/{e}.exe", patches=APROVADOS)
+
+
+def test_supervp_ausente_fica_indisponivel_com_o_motivo():
+    sem = detectar(lilypond=None, openmusic=InstalacaoOM(OM.executavel, "8.0", {**LIBS, "om-supervp": Path("x")}),
+                   abjad_versao="3.31", which=lambda e: None, patches=APROVADOS)
+    assert sem.capacidade("SuperVP").estado == "indisponivel" and "supervp" in sem.capacidade("SuperVP").motivo
+    assert sem.capacidade("OM-SuperVP").motivo == "instalada, mas falta o executável: supervp"
+    assert "analise_supervp" not in sem.disponiveis()
+
+
+def test_dado_espectral_importado_vira_evento_espectral_e_depois_notas(tmp_path, monkeypatch):
+    monkeypatch.setitem(PATCHES, "analise_supervp", replace(PATCHES["analise_supervp"], arquivo=__file__))
+    plano = _plano("analise_supervp", {"parciais": 2, "quadros": 2})
+    plano["operacoes"].append({"procedimento": "eventos_do_espectro",
+                               "parametros": [{"nome": "alturas_por_quadro", "valor": 2}]})
+    c, r, _ = _rodar(plano, modo="hibrido", registro=COM_SUPERVP, pasta=tmp_path)
+    assert r.tarefa is not None, r.resumo
+    analise = "3  0 220 1  0 440 0.5  0.5 330 0.8"  # dois quadros: t=0 (220, 440 Hz) e t=0.5 s (330 Hz)
+    v = retomar(c, analise).versao
+    assert v is not None, retomar
+    espectral = v.experimento["intermediarios"][0]["partes"][0]
+    assert {e["tipo"] for e in espectral["vozes"][0]["eventos"]} == {"espectral"}  # o importado não tem notas
+    assert v.ir.partes[0].instrumento.startswith("Análise espectral")
+    assert all(e.tipo == "espectral" for e in v.ir.partes[0].vozes[0].eventos)
+    notas = [e for p in v.ir.partes[1:] for voz in p.vozes for e in voz.eventos if isinstance(e, Nota)]
+    assert notas and {e.proveniencia.origem for e in notas} == {"algoritmo"}
+
+
+# --- 17: Chaos controlando registro, dinâmica e durações -----------------------------------------------------------
+
+_SERIE = " ".join(f"{v:.10f}" for v in _verhulst(0.1, 2.8, 3))  # t normalizado por compasso: 0, .275, .972, 1
+
+
+def _chaos(tmp_path, procedimento, minimo, maximo):
+    c = _quarteto(4)
+    plano = _plano(procedimento, {"x0": 0.1, "turbulencia": 2.8, "minimo": minimo, "maximo": maximo})
+    c, r, _ = _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=c, pasta=tmp_path)
+    assert r.tarefa is not None, r.resumo
+    assert (Path(r.tarefa.pasta) / "entrada.txt").read_text() == "0.1 2.8 3\n"
+    antes = c.versoes[0].ir
+    v = retomar(c, _SERIE).versao
+    assert v is not None
+    return antes, v.ir
+
+
+def _notas_do_compasso(ir, parte, n):
+    inicio = ir.inicios()[n - 1]
+    return [e for v in ir.partes[parte].vozes for e in v.eventos
+            if isinstance(e, Nota) and inicio <= e.inicio < inicio + ir.compassos[n - 1].comprimento]
+
+
+def test_chaos_registro_desloca_cada_compasso_pelo_valor_da_serie(tmp_path):
+    antes, depois = _chaos(tmp_path, "registro_caotico", 0, 1200)
+    for n, deslocamento in [(1, 0), (2, 350), (3, 1150), (4, 1200)]:  # 0,275 x 1200 = 330 -> 350 (quartos de tom)
+        a = [x.alturas[0].midicents for x in _notas_do_compasso(antes, 3, n)]
+        d = [x.alturas[0].midicents for x in _notas_do_compasso(depois, 3, n)]
+        assert d == [x + deslocamento for x in a]
+
+
+def test_chaos_dinamica_marca_o_primeiro_ataque_de_cada_compasso(tmp_path):
+    _, depois = _chaos(tmp_path, "dinamica_caotica", 0, 9)
+    for parte in range(4):
+        marcas = [_notas_do_compasso(depois, parte, n)[0].dinamica for n in range(1, 5)
+                  if _notas_do_compasso(depois, parte, n)]
+        assert marcas[0] == "pppp" and marcas[-1] == "ffff"
+
+
+def test_chaos_duracoes_trocam_a_figura_de_cada_compasso_e_mantem_as_alturas(tmp_path):
+    antes, depois = _chaos(tmp_path, "duracoes_caoticas", 1, 3)  # mínima no menor valor, colcheia no maior
+    for n, figura in [(1, F(1, 2)), (4, F(1, 8))]:
+        notas = _notas_do_compasso(depois, 3, n)
+        assert notas and {x.duracao for x in notas} == {figura}
+        originais = {x.alturas[0].midicents for x in _notas_do_compasso(antes, 3, n)}
+        assert {x.alturas[0].midicents for x in notas} <= originais
+
+
+# --- 17: restrições do plano traduzidas para a Situation -----------------------------------------------------------
+
+def _situation_com(tmp_path, restricoes, instrumentos=None, alturas=12):
+    plano = _plano("distribuir_restricoes", {"alturas": alturas, "base": 5500, "passo": 100},
+                   **({"instrumentos": instrumentos} if instrumentos else {}))
+    plano["restricoes"] = restricoes
+    return _rodar(plano, modo="openmusic", registro=COM_LIBS, pasta=tmp_path)
+
+
+def test_situation_intervalo_proibido_vira_pares_no_entrada(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "intervalo_proibido", "valor": 100}])
+    assert r.tarefa is not None, r.resumo
+    linhas = (Path(r.tarefa.pasta) / "entrada.txt").read_text().splitlines()
+    assert linhas[13] == "8"  # 4 partes x 2 pares de notas consecutivas
+    assert "0 4 100" in linhas[14:] and "7 11 100" in linhas[14:]
+
+
+def test_situation_solucao_que_viola_intervalo_do_plano_e_rejeitada_com_o_local(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "intervalo_proibido", "valor": 100}])
+    ruim = [5500, 5900, 6300, 6100, 5600, 6000, 6400, 6200, 5700, 5800, 6500, 6600]  # violino 1: 5500 -> 5600
+    r2 = retomar(c, " ".join(map(str, ruim)))
+    assert r2.versao is None and "intervalo_proibido" in r2.resumo and "P1 c.2" in r2.resumo
+
+
+def test_situation_tessitura_do_plano_estreita_o_dominio_da_parte(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "tessitura", "grave": 6000, "agudo": 6600, "partes": ["P4"]}])
+    linhas = (Path(r.tarefa.pasta) / "entrada.txt").read_text().splitlines()
+    assert linhas[4].split()[:2] == ["7", "6000"]  # vaga 3 = violoncelo (P4): só 6000–6600
+    assert linhas[1].split()[:2] == ["12", "5500"]  # violino intocado
+
+
+def test_situation_impossivel_com_intervalos_e_recusado_sem_ir_ao_openmusic(tmp_path):
+    # 4 alturas vizinhas num violino só, proibindo 100 e 200 cents entre notas seguidas: não há ordem possível
+    proibidos = [{"tipo": "intervalo_proibido", "valor": 100}, {"tipo": "intervalo_proibido", "valor": 200}]
+    c, r, _ = _situation_com(tmp_path, proibidos, instrumentos=["violino"], alturas=4)
+    assert r.tarefa is None and not any(tmp_path.iterdir()) and "sem solução" in r.resumo
+    assert "intervalo proibido de 100" in r.resumo
+
+
+def test_situation_restricao_com_parte_inexistente_e_recusada(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "tessitura", "grave": 3600, "agudo": 9600, "partes": ["1", "2"]}])
+    assert r.tarefa is None and "['1', '2']" in r.resumo and "P1" in r.resumo
