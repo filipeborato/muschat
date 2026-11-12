@@ -279,3 +279,11 @@ def test_planejador_recebe_os_instrumentos_aceitos():
     compor("pedido", Composicao(), gerador=g, chat=ChatFake(), modelo="m")
     sistema = g.chamadas[0].config.system_instruction
     assert "clarone" in sistema and "violoncelo" in sistema
+
+
+def test_restricao_que_cita_parte_inexistente_e_recusada():
+    c = _quarteto()
+    plano = _plano("transpor", {"intervalo": 100})
+    plano["restricoes"] = [{"tipo": "intervalo_proibido", "valor": 100, "partes": ["violoncelo"]}]
+    r = _compor(c, plano)
+    assert r.versao is None and "violoncelo" in r.resumo and len(c.versoes) == 1

@@ -301,9 +301,15 @@ def _parametros(op: Operacao, catalogo: dict[str, Procedimento], existe: bool) -
 
 def _validar_selecao(plano: Plano, atual: MusicIR | None) -> None:
     sel = plano.selecao
-    if sel.total or atual is None:  # peça nova: a seleção vale sobre o que o plano acabou de criar
+    if atual is None:  # peça nova: seleção e restrições valem sobre o que o plano acabou de criar
         return
     partes = {p.id for p in atual.partes}
+    cria_peca = any(op.procedimento in CATALOGO and not CATALOGO[op.procedimento].requer_composicao
+                    for op in plano.operacoes)  # peça nova: as partes ainda não existem (a Situation confere)
+    if not cria_peca and (fora := sorted({i for r in plano.restricoes for i in r.partes if i not in partes})):
+        raise Recusa(f"as restrições citam partes que não existem na composição: {fora}.")
+    if sel.total:
+        return
     vozes = {v.id for p in atual.partes for v in p.vozes}
     if inexistentes := [i for i in sel.partes if i not in partes] + [i for i in sel.vozes if i not in vozes]:
         raise Recusa(f"a seleção cita ids que não existem na composição: {inexistentes}.")

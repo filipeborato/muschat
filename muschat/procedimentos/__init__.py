@@ -44,6 +44,9 @@ class Procedimento:
 
 _NIVEIS = "0 pppp, 1 ppp, 2 pp, 3 p, 4 mp, 5 mf, 6 f, 7 ff, 8 fff, 9 ffff"
 _RAMPA = "em rampa linear do primeiro ao último compasso da seleção"
+_FIGURAS = "figura 1/2^n: 0 semibreve, 1 mínima, 2 semínima, 3 colcheia, 4 semicolcheia"
+_VERHULST = {"x0": Faixa(0.01, 0.99, 0.1, "valor inicial da série (população inicial)", inteiro=False),
+             "turbulencia": Faixa(0, 3, 2.8, "lambda de Verhulst: acima de ~2.57 o processo é caótico", inteiro=False)}
 
 CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
     Procedimento(
@@ -117,17 +120,28 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
     # --- só no OpenMusic (patches aprovados; o Python não executa) ---
     Procedimento("densidade_caotica", "Só no OpenMusic (Chaos): o mapa logístico de Verhulst dá um valor por "
                  "compasso da seleção, normalizado e usado como densidade de ataques entre mínimo e máximo.",
-                 {"x0": Faixa(0.01, 0.99, 0.1, "valor inicial da série (população inicial)", inteiro=False),
-                  "turbulencia": Faixa(0, 3, 2.8, "lambda de Verhulst: acima de ~2.57 o processo é caótico",
-                                       inteiro=False),
+                 {**_VERHULST,
                   "minimo": Faixa(0, 4, 0.5, "ataques por semínima no menor valor da série", inteiro=False),
                   "maximo": Faixa(0, 4, 3, "ataques por semínima no maior valor da série", inteiro=False)},
                  None),
+    Procedimento("registro_caotico", "Só no OpenMusic (Chaos): a série de Verhulst, um valor por compasso, desloca o "
+                 "registro de todas as notas do compasso entre o mínimo e o máximo.",
+                 {**_VERHULST,
+                  "minimo": Faixa(-2400, 2400, 0, "deslocamento no menor valor da série", unidade="cents"),
+                  "maximo": Faixa(-2400, 2400, 1200, "deslocamento no maior valor da série", unidade="cents")}, None),
+    Procedimento("dinamica_caotica", "Só no OpenMusic (Chaos): a série de Verhulst, um valor por compasso, escolhe a "
+                 "dinâmica do primeiro ataque de cada compasso entre o mínimo e o máximo.",
+                 {**_VERHULST, "minimo": Faixa(0, 9, 1, _NIVEIS), "maximo": Faixa(0, 9, 8, _NIVEIS)}, None),
+    Procedimento("duracoes_caoticas", "Só no OpenMusic (Chaos): a série de Verhulst, um valor por compasso, escolhe a "
+                 "figura com que o compasso é reescrito (mantendo as alturas que ele tinha).",
+                 {**_VERHULST, "minimo": Faixa(0, 4, 1, _FIGURAS), "maximo": Faixa(0, 4, 4, _FIGURAS)}, None),
     Procedimento("distribuir_restricoes", "Só no OpenMusic (Situation): cria uma peça nova em que N alturas "
                  "(base + k*passo) são distribuídas entre os instrumentos do plano por um solver de restrições, "
                  "cada uma na tessitura do instrumento, todas diferentes (sem uníssonos). Um acorde por compasso.",
                  {"alturas": Faixa(4, 24, 12, "quantas alturas"),
-                  "base": Faixa(2400, 8400, 5500, "altura mais grave", unidade="midicents (5500 = Sol 3)"),
+                  "base": Faixa(2400, 8400, 5500, "altura mais grave; cada instrumento precisa alcançar alturas "
+                                "para as suas vagas, então comece onde todos tocam (cordas com violino: Sol 3 = 5500)",
+                                unidade="midicents (5500 = Sol 3)"),
                   "passo": Faixa(50, 1200, 100, "distância entre alturas vizinhas", unidade="cents")},
                  None, requer_composicao=False),
     Procedimento("sintese_aditiva", "Só no OpenMusic (OMChroma + Csound): as notas da seleção controlam uma "

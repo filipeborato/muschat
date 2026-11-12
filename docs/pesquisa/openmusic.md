@@ -72,6 +72,30 @@ Listener (`Lisp › Load File`), com plano fixo e semente 7, sem o Gemini; as sa
 
 Artefatos locais: `.muschat/experimentos-reais/libs/`.
 
+### Ticket 17: alvos da Chaos, restrições na Situation e aceite pelo Gemini (2026-11-12)
+
+- A mesma chamada `alea::verhulst` (`patches/chaos_verhulst.lisp`) agora dirige densidade, registro, dinâmica ou
+  figura rítmica por compasso; o mapeamento para a MusicIR é Python, testado.
+- A Situation recebe as restrições do plano: tessitura estreita o domínio das partes citadas; intervalo proibido vira
+  pares `i j d` no `entrada.txt`, uma `generic-cnstr` com opção `f` por par. Validado no OM com 100 cents proibidos:
+  saída `6100 6200 6400 5900 6300 5600 5800 5700 6500 6000 5500 6600`, sem nenhum semitom entre notas seguidas da
+  mesma parte. Antes de enviar, o Muschat decide a existência (Hall; busca limitada quando há pares).
+- Aceite manual pelo Gemini (`gemini-3.1-flash-lite`, `responder` do app, OpenMusic ativado, seletor Híbrido), com as
+  etapas no OM real:
+  - 12, "Gere um processo composicional baseado em dinâmica caótica...": plano `dinamica_caotica` (x0 0.45, lambda
+    2.9) e `densidade_caotica` (x0 0.33, lambda 2.95), duas etapas no OM; séries conferidas com a fórmula.
+  - 13, "Distribua doze alturas em quatro instrumentos...": na primeira tentativa o modelo escolheu base 3600 e o
+    Muschat recusou listando as condições ("Violino alcança 0 alturas para 3 vagas"); depois de explicar o
+    parâmetro na descrição, o plano foi base 4800, passo 200, violino/viola/violoncelo/contrabaixo, resolvido pela
+    Situation sem uníssono e dentro das tessituras. Uma restrição com `partes: ["1".."4"]` revelou que ids
+    inexistentes eram ignorados; agora são recusados e o prompt diz que uma peça nova tem partes P1, P2...
+  - 14, "Utilize os eventos da partitura para controlar uma síntese aditiva...": 426 parciais (2 a 16 por nota),
+    `.orc`/`.sco` do OMChroma, `muschat.wav` de 16 s pelo Csound 7.0, pico 0,77.
+- Limite reconhecido: nestas integrações o OM devolve só números (séries, solução); ritmo, registro e orquestração
+  continuam decididos pelos procedimentos Python. A qualidade musical resultante é o assunto da spec seguinte.
+
+Artefatos: `.muschat/experimentos-reais/aceite-17/`.
+
 ### Registro da retomada antes da execução
 
 - **[máquina]** OpenMusic 8.0 encontrado em `C:/Program Files/OpenMusic 8.0`; Esquisse 1.2 em

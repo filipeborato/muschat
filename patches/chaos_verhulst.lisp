@@ -1,4 +1,4 @@
-;;; Muschat — patch aprovado "densidade_caotica" (autoria do projeto Muschat; chama Verhulst da Chaos).
+;;; Muschat — patch aprovado "chaos_verhulst" (densidade, registro, dinâmica e durações caóticos) (autoria do projeto Muschat; chama Verhulst da Chaos).
 ;;;
 ;;; Lê <pasta>/entrada.txt (três números: x0 lambda iteracoes), chama (alea::verhulst x0 lambda iteracoes), que
 ;;; devolve iteracoes + 1 valores, e grava a série em <pasta>/saida.txt, separados por espaço. Em erro, grava -2 em
@@ -23,7 +23,7 @@
   (with-open-file (s (merge-pathnames nome pasta) :direction :output :if-exists :supersede :if-does-not-exist :create)
     (write-string texto s)))
 
-(defun muschat-densidade-caotica (pasta)
+(defun muschat-chaos-verhulst (pasta)
   (handler-case
       (let ((numeros (muschat-chaos-ler (merge-pathnames "entrada.txt" pasta))))
         (unless (= (length numeros) 3)
@@ -37,4 +37,4 @@
       (muschat-chaos-gravar pasta "saida.txt" (format nil "-2~%")))))
 
 ;; A pasta da tarefa acompanha o arquivo carregado, independentemente do workspace.
-(muschat-densidade-caotica (make-pathname :name nil :type nil :defaults *load-truename*))
+(muschat-chaos-verhulst (make-pathname :name nil :type nil :defaults *load-truename*))

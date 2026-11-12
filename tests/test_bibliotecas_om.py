@@ -2,6 +2,7 @@
 OpenMusic é escrita à mão; o teste real roda só onde a biblioteca está instalada)."""
 
 from dataclasses import replace
+from fractions import Fraction as F
 from pathlib import Path
 
 from muschat.musicir import Nota
@@ -209,3 +210,95 @@ def test_dado_espectral_importado_vira_evento_espectral_e_depois_notas(tmp_path,
     assert all(e.tipo == "espectral" for e in v.ir.partes[0].vozes[0].eventos)
     notas = [e for p in v.ir.partes[1:] for voz in p.vozes for e in voz.eventos if isinstance(e, Nota)]
     assert notas and {e.proveniencia.origem for e in notas} == {"algoritmo"}
+
+
+# --- 17: Chaos controlando registro, dinâmica e durações -----------------------------------------------------------
+
+_SERIE = " ".join(f"{v:.10f}" for v in _verhulst(0.1, 2.8, 3))  # t normalizado por compasso: 0, .275, .972, 1
+
+
+def _chaos(tmp_path, procedimento, minimo, maximo):
+    c = _quarteto(4)
+    plano = _plano(procedimento, {"x0": 0.1, "turbulencia": 2.8, "minimo": minimo, "maximo": maximo})
+    c, r, _ = _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=c, pasta=tmp_path)
+    assert r.tarefa is not None, r.resumo
+    assert (Path(r.tarefa.pasta) / "entrada.txt").read_text() == "0.1 2.8 3\n"
+    antes = c.versoes[0].ir
+    v = retomar(c, _SERIE).versao
+    assert v is not None
+    return antes, v.ir
+
+
+def _notas_do_compasso(ir, parte, n):
+    inicio = ir.inicios()[n - 1]
+    return [e for v in ir.partes[parte].vozes for e in v.eventos
+            if isinstance(e, Nota) and inicio <= e.inicio < inicio + ir.compassos[n - 1].comprimento]
+
+
+def test_chaos_registro_desloca_cada_compasso_pelo_valor_da_serie(tmp_path):
+    antes, depois = _chaos(tmp_path, "registro_caotico", 0, 1200)
+    for n, deslocamento in [(1, 0), (2, 350), (3, 1150), (4, 1200)]:  # 0,275 x 1200 = 330 -> 350 (quartos de tom)
+        a = [x.alturas[0].midicents for x in _notas_do_compasso(antes, 3, n)]
+        d = [x.alturas[0].midicents for x in _notas_do_compasso(depois, 3, n)]
+        assert d == [x + deslocamento for x in a]
+
+
+def test_chaos_dinamica_marca_o_primeiro_ataque_de_cada_compasso(tmp_path):
+    _, depois = _chaos(tmp_path, "dinamica_caotica", 0, 9)
+    for parte in range(4):
+        marcas = [_notas_do_compasso(depois, parte, n)[0].dinamica for n in range(1, 5)
+                  if _notas_do_compasso(depois, parte, n)]
+        assert marcas[0] == "pppp" and marcas[-1] == "ffff"
+
+
+def test_chaos_duracoes_trocam_a_figura_de_cada_compasso_e_mantem_as_alturas(tmp_path):
+    antes, depois = _chaos(tmp_path, "duracoes_caoticas", 1, 3)  # mínima no menor valor, colcheia no maior
+    for n, figura in [(1, F(1, 2)), (4, F(1, 8))]:
+        notas = _notas_do_compasso(depois, 3, n)
+        assert notas and {x.duracao for x in notas} == {figura}
+        originais = {x.alturas[0].midicents for x in _notas_do_compasso(antes, 3, n)}
+        assert {x.alturas[0].midicents for x in notas} <= originais
+
+
+# --- 17: restrições do plano traduzidas para a Situation -----------------------------------------------------------
+
+def _situation_com(tmp_path, restricoes, instrumentos=None, alturas=12):
+    plano = _plano("distribuir_restricoes", {"alturas": alturas, "base": 5500, "passo": 100},
+                   **({"instrumentos": instrumentos} if instrumentos else {}))
+    plano["restricoes"] = restricoes
+    return _rodar(plano, modo="openmusic", registro=COM_LIBS, pasta=tmp_path)
+
+
+def test_situation_intervalo_proibido_vira_pares_no_entrada(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "intervalo_proibido", "valor": 100}])
+    assert r.tarefa is not None, r.resumo
+    linhas = (Path(r.tarefa.pasta) / "entrada.txt").read_text().splitlines()
+    assert linhas[13] == "8"  # 4 partes x 2 pares de notas consecutivas
+    assert "0 4 100" in linhas[14:] and "7 11 100" in linhas[14:]
+
+
+def test_situation_solucao_que_viola_intervalo_do_plano_e_rejeitada_com_o_local(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "intervalo_proibido", "valor": 100}])
+    ruim = [5500, 5900, 6300, 6100, 5600, 6000, 6400, 6200, 5700, 5800, 6500, 6600]  # violino 1: 5500 -> 5600
+    r2 = retomar(c, " ".join(map(str, ruim)))
+    assert r2.versao is None and "intervalo_proibido" in r2.resumo and "P1 c.2" in r2.resumo
+
+
+def test_situation_tessitura_do_plano_estreita_o_dominio_da_parte(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "tessitura", "grave": 6000, "agudo": 6600, "partes": ["P4"]}])
+    linhas = (Path(r.tarefa.pasta) / "entrada.txt").read_text().splitlines()
+    assert linhas[4].split()[:2] == ["7", "6000"]  # vaga 3 = violoncelo (P4): só 6000–6600
+    assert linhas[1].split()[:2] == ["12", "5500"]  # violino intocado
+
+
+def test_situation_impossivel_com_intervalos_e_recusado_sem_ir_ao_openmusic(tmp_path):
+    # 4 alturas vizinhas num violino só, proibindo 100 e 200 cents entre notas seguidas: não há ordem possível
+    proibidos = [{"tipo": "intervalo_proibido", "valor": 100}, {"tipo": "intervalo_proibido", "valor": 200}]
+    c, r, _ = _situation_com(tmp_path, proibidos, instrumentos=["violino"], alturas=4)
+    assert r.tarefa is None and not any(tmp_path.iterdir()) and "sem solução" in r.resumo
+    assert "intervalo proibido de 100" in r.resumo
+
+
+def test_situation_restricao_com_parte_inexistente_e_recusada(tmp_path):
+    c, r, _ = _situation_com(tmp_path, [{"tipo": "tessitura", "grave": 3600, "agudo": 9600, "partes": ["1", "2"]}])
+    assert r.tarefa is None and "['1', '2']" in r.resumo and "P1" in r.resumo

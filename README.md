@@ -296,9 +296,14 @@ Lisp error to `erro.txt`, and the upload shows that error.
 
 | Library | Procedure | Example request | Real result (fixed plan, seed 7, no Gemini call) |
 |---|---|---|---|
-| Chaos 1.5 | `densidade_caotica` (Verhulst logistic map → attacks per bar) | `Gere um processo composicional baseado em dinâmica caótica para controlar a densidade dos ataques de um quarteto.` (on an existing piece) | series `0.1 0.352 0.9907 1.0166`, equal to the documented formula; 2, 5, 12, 12 attacks per bar |
-| Situation 3.1 | `distribuir_restricoes` (`csolver`, one domain per slot, all different) | `Distribua doze alturas em quatro instrumentos, evitando uníssonos e mantendo cada parte dentro de seu registro.` | 12 different pitches, each in range, accepted by the checker |
+| Chaos 1.5 | `densidade_caotica`, `registro_caotico`, `dinamica_caotica`, `duracoes_caoticas` (Verhulst logistic map → one value per bar) | `Gere um processo composicional baseado em dinâmica caótica para controlar a densidade dos ataques de um quarteto.` (on an existing piece) | series `0.1 0.352 0.9907 1.0166`, equal to the documented formula; 2, 5, 12, 12 attacks per bar |
+| Situation 3.1 | `distribuir_restricoes` (`csolver`, one domain per slot, all different; the plan's range and forbidden-interval constraints go into the patch) | `Distribua doze alturas em quatro instrumentos, evitando uníssonos e mantendo cada parte dentro de seu registro.` | 12 different pitches, each in range, accepted by the checker |
 | OMChroma 5.2 + Csound | `sintese_aditiva` (notes → `add-1` partials, count rising over time) | `Utilize os eventos da partitura para controlar uma síntese aditiva cuja densidade espectral aumenta progressivamente.` | 159 partials, `.orc`/`.sco` from OMChroma, 8 s `muschat.wav` rendered by Csound 7.0, electronic part added (cues and a curve, no notes) |
+
+The three example requests were also run through Gemini (`gemini-3.1-flash-lite`, Hybrid selector) with the OpenMusic
+steps in the real OM; results in `docs/pesquisa/openmusic.md`. In these integrations OpenMusic returns numbers (a
+series, a solution); rhythm, register and orchestration are still decided by the Python procedures, so the musical
+result is only as good as those procedures.
 
 An impossible Situation problem (more slots than reachable pitches) is refused by Muschat with the conditions that
 fail, and never sent to OpenMusic: in the real test, the solver's exhaustive search for a non-existent solution froze

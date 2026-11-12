@@ -1,7 +1,8 @@
 ;;; Muschat — patch aprovado "distribuir_restricoes" (autoria do projeto Muschat; chama Csolver, variable-domains e
 ;;; generic-cnstr da Situation).
 ;;;
-;;; Lê <pasta>/entrada.txt: N, depois, para cada vaga, o tamanho do domínio seguido das alturas possíveis (midicents).
+;;; Lê <pasta>/entrada.txt: N, depois, para cada vaga, o tamanho do domínio seguido das alturas possíveis (midicents),
+;;; e, opcionalmente, P seguido de P trincas "i j d" (|altura(i) - altura(j)| /= d cents: intervalo proibido).
 ;;; Cada vaga é uma variável com o seu domínio (variable-domains); uma restrição genérica exige valores diferentes em
 ;;; todas as combinações de vagas (sem uníssono, cada altura uma vez). Grava em <pasta>/saida.txt as N alturas na
 ;;; ordem das vagas, ou -1 se o solver não achar solução. Em erro, -2 em saida.txt e a mensagem em erro.txt.
@@ -27,25 +28,34 @@
     (write-string texto s)))
 
 (defun muschat-situation-dominios (numeros)
-  "N m1 a b c m2 d e ... -> ((a b c) (d e) ...)"
-  (let ((n (pop numeros)))
-    (loop repeat n
-          collect (let ((m (pop numeros)))
-                    (when (< (length numeros) m) (error "entrada.txt termina antes do domínio anunciado"))
-                    (loop repeat m collect (pop numeros))))))
+  "N m1 a b c m2 d e ... [P i j d ...] -> (values ((a b c) (d e) ...) ((i j d) ...))"
+  (let* ((n (pop numeros))
+         (dominios (loop repeat n
+                         collect (let ((m (pop numeros)))
+                                   (when (< (length numeros) m) (error "entrada.txt termina antes do domínio anunciado"))
+                                   (loop repeat m collect (pop numeros)))))
+         (p (if numeros (pop numeros) 0)))
+    (unless (= (length numeros) (* 3 p)) (error "entrada.txt anuncia ~D pares e traz ~D números" p (length numeros)))
+    (values dominios (loop repeat p collect (list (pop numeros) (pop numeros) (pop numeros))))))
+
+(defun muschat-situation-par (i j d)
+  "|altura(i) - altura(j)| /= d, só nas duas vagas dadas (opção f)."
+  (generic-cnstr #'(lambda (a b) (/= (abs (- a b)) d)) (list i j) 'f))
 
 (defun muschat-distribuir-restricoes (pasta)
   (handler-case
-      (let* ((dominios (muschat-situation-dominios (muschat-situation-ler (merge-pathnames "entrada.txt" pasta))))
-             (n (length dominios))
-             (vagas (loop for i below n collect i))
-             ;; generic-cnstr já devolve a lista de restrições (uma por par de vagas): vai direto para a Csolver
-             (diferentes (generic-cnstr #'(lambda (a b) (/= a b)) vagas 'a))
-             (solucao (csolver n nil nil nil diferentes nil (variable-domains dominios) nil 1))
-             (valores (remove-if-not #'numberp (flat solucao))))
-        (muschat-situation-gravar pasta "saida.txt"
-                                  (if valores (format nil "~{~D~^ ~}~%" valores) (format nil "-1~%")))
-        valores)
+      (multiple-value-bind (dominios pares)
+          (muschat-situation-dominios (muschat-situation-ler (merge-pathnames "entrada.txt" pasta)))
+        (let* ((n (length dominios))
+               (vagas (loop for i below n collect i))
+               ;; generic-cnstr já devolve a lista de restrições (uma por par de vagas): vai direto para a Csolver
+               (restricoes (append (generic-cnstr #'(lambda (a b) (/= a b)) vagas 'a)
+                                   (loop for (i j d) in pares append (muschat-situation-par i j d))))
+               (solucao (csolver n nil nil nil restricoes nil (variable-domains dominios) nil 1))
+               (valores (remove-if-not #'numberp (flat solucao))))
+          (muschat-situation-gravar pasta "saida.txt"
+                                    (if valores (format nil "~{~D~^ ~}~%" valores) (format nil "-1~%")))
+          valores))
     (error (e)
       (muschat-situation-gravar pasta "erro.txt" (format nil "~A~%" e))
       (muschat-situation-gravar pasta "saida.txt" (format nil "-2~%")))))

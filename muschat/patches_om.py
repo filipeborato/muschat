@@ -18,7 +18,7 @@ from pathlib import Path
 from muschat import musicir as ir
 from muschat.instrumentos import instrumento
 from muschat.plano import Plano
-from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir
+from muschat.procedimentos.comum import DINAMICAS, QUARTETO, Grade, Ids, com_alturas, exigir, por_compasso
 from muschat.procedimentos.progressivos import densidade_por_compasso
 from muschat.restricoes import Restricao, verificar
 
@@ -115,7 +115,7 @@ def _serie_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
                     proveniencia=ctx.proveniencia)
 
 
-# --- Chaos: mapa logístico de Verhulst -> densidade por compasso --------------------------------------------------------
+# --- Chaos: mapa logístico de Verhulst -> densidade, registro, dinâmica ou durações por compasso --------------------
 
 def _trecho(atual: ir.MusicIR | None, plano: Plano | None) -> tuple[ir.MusicIR, int, int]:
     atual = exigir(atual)
@@ -130,54 +130,178 @@ def _chaos_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | 
     return f"{p['x0']:g} {p['turbulencia']:g} {ultimo - primeiro}\n"  # Verhulst devolve long + 1 valores
 
 
-def _chaos_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
-    atual, primeiro, ultimo = _trecho(ctx.atual, ctx.plano)
-    _contar(valores, ultimo - primeiro + 1)
-    if any(not math.isfinite(v) or abs(v) > 1e6 for v in valores):
-        raise ValueError("a série caótica tem valores não finitos ou fora de escala")
-    lo, hi, p = min(valores), max(valores), ctx.parametros
+Alvo = Callable[[int], float]  # compasso (1..n) -> valor entre mínimo e máximo
+Aplicar = Callable[[ir.MusicIR, Plano, Alvo, random.Random], ir.MusicIR]
 
-    def alvo(n: int) -> float:  # série normalizada 0..1 -> ataques por semínima entre mínimo e máximo
-        t = (valores[n - primeiro] - lo) / (hi - lo) if hi > lo else 0.5
-        return p["minimo"] + (p["maximo"] - p["minimo"]) * t
 
-    assert ctx.plano is not None
-    return densidade_por_compasso(atual, ctx.plano.selecao, alvo, ctx.rng)
+def _chaos_ler(aplicar: Aplicar) -> Ler:
+    """A mesma série de Verhulst (um valor por compasso da seleção), normalizada e levada a [mínimo, máximo], dirige o
+    que `aplicar` muda em cada compasso."""
+    def ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
+        atual, primeiro, ultimo = _trecho(ctx.atual, ctx.plano)
+        _contar(valores, ultimo - primeiro + 1)
+        if any(not math.isfinite(v) or abs(v) > 1e6 for v in valores):
+            raise ValueError("a série caótica tem valores não finitos ou fora de escala")
+        lo, hi, p = min(valores), max(valores), ctx.parametros
+
+        def alvo(n: int) -> float:
+            t = (valores[n - primeiro] - lo) / (hi - lo) if hi > lo else 0.5
+            return p["minimo"] + (p["maximo"] - p["minimo"]) * t
+
+        assert ctx.plano is not None  # _trecho já exigiu
+        return aplicar(atual, ctx.plano, alvo, ctx.rng)
+    return ler
+
+
+def _densidade(atual: ir.MusicIR, plano: Plano, alvo: Alvo, rng: random.Random) -> ir.MusicIR:
+    return densidade_por_compasso(atual, plano.selecao, alvo, rng)
+
+
+def _registro(atual: ir.MusicIR, plano: Plano, alvo: Alvo, rng: random.Random) -> ir.MusicIR:
+    """Todas as notas do compasso deslocadas pelo valor do compasso (cents, em quartos de tom)."""
+    def compasso(parte: ir.Parte, voz: ir.Voz, grupo: list[ir.Evento], n: int) -> list[ir.Evento]:
+        d = round(alvo(n) / 50) * 50
+        return [com_alturas(e, [a.midicents + d for a in e.alturas]) if isinstance(e, ir.Nota) else e for e in grupo]
+    return por_compasso(atual, plano.selecao, compasso)
+
+
+def _dinamica(atual: ir.MusicIR, plano: Plano, alvo: Alvo, rng: random.Random) -> ir.MusicIR:
+    """Uma dinâmica por compasso (0 pppp .. 9 ffff) no primeiro ataque; as outras marcas do compasso saem."""
+    def compasso(parte: ir.Parte, voz: ir.Voz, grupo: list[ir.Evento], n: int) -> list[ir.Evento]:
+        nivel = DINAMICAS[min(9, max(0, round(alvo(n))))]
+        primeira = next((e.id for e in grupo if isinstance(e, ir.Nota)), None)
+        return [e.model_copy(update={"dinamica": nivel if e.id == primeira else None})
+                if isinstance(e, (ir.Nota, ir.Pausa)) else e for e in grupo]
+    return por_compasso(atual, plano.selecao, compasso)
+
+
+def _duracoes(atual: ir.MusicIR, plano: Plano, alvo: Alvo, rng: random.Random) -> ir.MusicIR:
+    """O compasso é reescrito numa figura só, 1/2^e (0 semibreve .. 4 semicolcheia), com as alturas que ele já tinha,
+    em ordem e em ciclo; compasso sem notas, ou que a figura não divide, fica como está."""
+    ids = Ids(atual)
+
+    def compasso(parte: ir.Parte, voz: ir.Voz, grupo: list[ir.Evento], n: int) -> list[ir.Evento]:
+        notas = [e for e in grupo if isinstance(e, ir.Nota)]
+        figura = Fraction(1, 2 ** min(4, max(0, round(alvo(n)))))
+        inicio, fim = grupo[0].inicio, grupo[-1].fim
+        if not notas or ((fim - inicio) / figura).denominator != 1:
+            return grupo
+        quantos = int((fim - inicio) / figura)
+        reaproveitados = [e.id for e in grupo]
+        saida: list[ir.Evento] = []
+        for k in range(quantos):
+            fonte = notas[k % len(notas)]
+            eid = reaproveitados[k] if k < len(reaproveitados) else ids.novo(fonte.id)
+            saida.append(fonte.model_copy(update={"id": eid, "inicio": inicio + k * figura, "duracao": figura,
+                                                  "glissando": False, "dinamica": fonte.dinamica if k == 0 else None,
+                                                  "texto": None}))
+        return saida
+    return por_compasso(atual, plano.selecao, compasso)
 
 
 # --- Situation: alturas em instrumentos por restrições ------------------------------------------------------------------
 
-def _problema(p: dict[str, float], plano: Plano | None) -> tuple[list[str], list[int], list[list[int]]]:
-    """Instrumentos, alturas e domínio de cada vaga: a vaga s é do instrumento s % k, no acorde s // k."""
-    nomes = (plano.instrumentos if plano and plano.instrumentos else QUARTETO)
-    alturas = [int(p["base"] + k * p["passo"]) for k in range(int(p["alturas"]))]
+LIMITE_BUSCA = 200_000  # nós da busca que decide, antes do OM, se há solução com intervalos proibidos
+
+
+@dataclass(frozen=True)
+class Problema:
+    """A vaga s é do instrumento s % k, no acorde s // k; cada vaga recebe uma altura diferente do seu domínio, e
+    cada trinca (s, t, d) proíbe |altura(s) - altura(t)| = d cents."""
+
+    nomes: list[str]
+    alturas: list[int]
+    dominios: list[list[int]]
+    proibidos: list[tuple[int, int, int]]
+    restricoes: list[Restricao]
+
+
+def _problema(p: dict[str, float], plano: Plano | None) -> Problema:
+    """Restrições do plano traduzidas: tessitura estreita o domínio das vagas das partes citadas; intervalo proibido
+    vira um par por notas seguidas da mesma parte (como o verificador entende); sem uníssono já vale (alturas todas
+    diferentes); densidade máxima é conferida aqui e na importação (um ataque por compasso de 4/4)."""
+    nomes = plano.instrumentos if plano and plano.instrumentos else QUARTETO
+    restricoes = list(plano.restricoes) if plano else []
+    k = len(nomes)
+    alturas = [int(p["base"] + i * p["passo"]) for i in range(int(p["alturas"]))]
     if alturas[-1] > 12700:
         raise ValueError(f"as alturas passam de 12700 midicents ({alturas[-1]})")
-    tessituras = [instrumento(n).tessitura for n in nomes]
-    dominios = [[a for a in alturas if tessituras[s % len(nomes)][0] <= a <= tessituras[s % len(nomes)][1]]
-                for s in range(len(alturas))]
-    return nomes, alturas, dominios
+
+    validas = [f"P{j + 1}" for j in range(k)]
+    if estranhas := sorted({i for r in restricoes for i in r.partes if i not in validas}):
+        raise ValueError(f"restrições citam partes que a peça nova não terá: {estranhas} (válidas: {validas})")
+
+    def da_parte(r: Restricao, j: int) -> bool:
+        return not r.partes or validas[j] in r.partes
+
+    faixas = [[instrumento(n).tessitura] + [(r.grave, r.agudo) for r in restricoes
+                                             if r.tipo == "tessitura" and da_parte(r, j)]
+              for j, n in enumerate(nomes)]
+    dominios = [[a for a in alturas if all(lo <= a <= hi for lo, hi in faixas[s % k])] for s in range(len(alturas))]
+    proibidos = [(s, s + k, int(r.valor)) for r in restricoes if r.tipo == "intervalo_proibido" and r.valor
+                 for s in range(len(alturas) - k) if da_parte(r, s % k)]
+    return Problema(list(nomes), alturas, dominios, proibidos, restricoes)
+
+
+def _busca(pr: Problema, limite: int = LIMITE_BUSCA) -> list[int] | None | bool:
+    """Uma solução, None se provadamente não há, ou False se o limite de nós acabou antes de decidir."""
+    n, nos = len(pr.dominios), 0
+    vizinhos: dict[int, list[tuple[int, int]]] = {}
+    for s, t, d in pr.proibidos:
+        vizinhos.setdefault(s, []).append((t, d))
+        vizinhos.setdefault(t, []).append((s, d))
+    valor: dict[int, int] = {}
+
+    def cabe(s: int, a: int) -> bool:
+        return a not in valor.values() and all(t not in valor or abs(valor[t] - a) != d for t, d in vizinhos.get(s, []))
+
+    def passo() -> bool | None:
+        nonlocal nos
+        if len(valor) == n:
+            return True
+        nos += 1
+        if nos > limite:
+            return None
+        livres = [s for s in range(n) if s not in valor]
+        s = min(livres, key=lambda v: sum(cabe(v, a) for a in pr.dominios[v]))  # a vaga mais restrita primeiro
+        for a in pr.dominios[s]:
+            if cabe(s, a):
+                valor[s] = a
+                r = passo()
+                if r is not False:
+                    return r
+                del valor[s]
+        return False
+
+    r = passo()
+    return [valor[s] for s in range(n)] if r else (False if r is None else None)
 
 
 def _situation_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None) -> str:
     """Problema impossível nem vai ao OpenMusic: a busca exaustiva da Situation para provar que não há solução trava o
-    OM (visto no teste real). A condição de Hall abaixo decide a existência sozinha."""
-    nomes, alturas, dominios = _problema(p, plano)
-    condicoes, impossivel = _condicoes(nomes, alturas, dominios)
+    OM (visto no teste real). O Muschat decide a existência antes (_condicoes)."""
+    pr = _problema(p, plano)
+    condicoes, impossivel = _condicoes(pr)
     if impossivel:
         raise ValueError(f"sem solução, nada enviado ao OpenMusic. Condições: {condicoes}")
-    return f"{len(alturas)}\n" + "".join(f"{len(d)} {' '.join(map(str, d))}\n" for d in dominios)
+    texto = f"{len(pr.alturas)}\n" + "".join(f"{len(d)} {' '.join(map(str, d))}\n" for d in pr.dominios)
+    if pr.proibidos:
+        texto += f"{len(pr.proibidos)}\n" + "".join(f"{s} {t} {d}\n" for s, t, d in pr.proibidos)
+    return texto
 
 
-def _condicoes(nomes: list[str], alturas: list[int], dominios: list[list[int]]) -> tuple[str, bool]:
-    """As condições do problema e, se não houver solução, o grupo de instrumentos que a impede. Vagas -> alturas
-    diferentes é um emparelhamento: pela condição de Hall, há solução sse nenhum grupo tem mais vagas que alcance."""
+def _condicoes(pr: Problema) -> tuple[str, bool]:
+    """As condições do problema e, se não houver solução, o que a impede. Só com domínios, vagas -> alturas diferentes
+    é um emparelhamento: pela condição de Hall, há solução sse nenhum grupo tem mais vagas que alcance. Com intervalos
+    proibidos, uma busca limitada decide (e, se o limite acabar, o problema não vai ao OM)."""
+    nomes, alturas, dominios = pr.nomes, pr.alturas, pr.dominios
     linhas = [f"todas as {len(alturas)} alturas ({alturas[0]}–{alturas[-1]} mc) usadas uma vez (sem uníssono)"]
     vagas = [[s for s in range(len(alturas)) if s % len(nomes) == k] for k in range(len(nomes))]
     for k, nome in enumerate(nomes):
-        lo, hi = instrumento(nome).tessitura
-        linhas.append(f"{nome.capitalize()}: {len(vagas[k])} vagas dentro da tessitura {lo}–{hi} mc")
-    # condição de Hall: um grupo de instrumentos com mais vagas do que alturas ao alcance não tem solução
+        alcance = sorted({a for s in vagas[k] for a in dominios[s]})
+        faixa = f"{alcance[0]}–{alcance[-1]} mc" if alcance else "nenhuma altura"
+        linhas.append(f"{nome.capitalize()}: {len(vagas[k])} vagas dentro da tessitura ({faixa})")
+    linhas += [f"intervalo proibido de {d} cents entre notas seguidas" for d in sorted({d for _, _, d in pr.proibidos})]
     # shortcut: todos os subconjuntos (2^k), ok até ~16 instrumentos; trocar por fluxo máximo se orquestras vierem
     problemas, culpados = [], []
     for grupo in sorted((g for g in range(1, 2 ** len(nomes))), key=lambda g: bin(g).count("1")):
@@ -189,17 +313,27 @@ def _condicoes(nomes: list[str], alturas: list[int], dominios: list[list[int]]) 
         if len(alcance) < n_vagas:
             culpados.append(grupo)
             quem = " + ".join(nomes[k].capitalize() for k in membros)
-            problemas.append(f"{quem} alcançam {len(alcance)} alturas para {n_vagas} vagas")
-    fora = [a for a in alturas if not any(a in d for d in dominios)]
-    if fora:
+            verbo = "alcançam" if len(membros) > 1 else "alcança"
+            problemas.append(f"{quem} {verbo} {len(alcance)} alturas para {n_vagas} vagas")
+    if fora := [a for a in alturas if not any(a in d for d in dominios)]:
         problemas.append(f"nenhum instrumento alcança {fora}")
+    if lentas := [r.valor for r in pr.restricoes if r.tipo == "densidade_maxima" and r.valor is not None
+                  and r.valor < 0.25]:
+        problemas.append(f"densidade máxima {min(lentas):g} abaixo de 0,25 ataque por semínima (uma nota por compasso)")
+    if not problemas and pr.proibidos:
+        achou = _busca(pr)
+        if achou is None:
+            problemas.append("os intervalos proibidos não deixam nenhuma ordem possível")
+        elif achou is False:
+            problemas.append(f"não deu para garantir uma solução em {LIMITE_BUSCA} passos; relaxe as restrições")
     return "; ".join(linhas) + (". Impossível: " + "; ".join(problemas) if problemas else ""), bool(problemas)
 
 
 def _situation_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
-    nomes, alturas, dominios = _problema(ctx.parametros, ctx.plano)
+    pr = _problema(ctx.parametros, ctx.plano)
+    nomes, alturas = pr.nomes, pr.alturas
     if valores == [SEM_SOLUCAO]:
-        raise ValueError(f"a Situation não achou solução para as condições: {_condicoes(nomes, alturas, dominios)[0]}")
+        raise ValueError(f"a Situation não achou solução para as condições: {_condicoes(pr)[0]}")
     _contar(valores, len(alturas))
     if estranhas := [v for v in valores if v not in alturas]:
         raise ValueError(f"a solução tem alturas que não foram pedidas: {estranhas[:5]}")
@@ -219,7 +353,7 @@ def _situation_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
                                tessitura=inst.tessitura, vozes=[ir.Voz(id=f"P{j + 1}V1", eventos=eventos)]))
     solucao = ir.MusicIR(titulo="Distribuição por restrições (Situation)", compassos=_compassos(acordes),
                          partes=partes)
-    violacoes = [str(v) for v in verificar(solucao, [Restricao(tipo="sem_unissono")])]
+    violacoes = [str(v) for v in verificar(solucao, [Restricao(tipo="sem_unissono"), *pr.restricoes])]
     vistos: dict[float, int] = {}
     for s, v in enumerate(valores):
         if v in vistos:
@@ -375,14 +509,19 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         saida="saida.txt: a lista de midicents, separados por espaço (parênteses são aceitos)",
         passos=_passos("serie_harmonica.lisp", " Usa Midics (1) e Chord (1)."),
         montar=_serie_montar, ler=_serie_ler, autor="OpenMusic/Esquisse", arquivo="patches/serie_harmonica.lisp", validado=True),
-    PatchAprovado(
-        procedimento="densidade_caotica", biblioteca="chaos", funcao_om="Verhulst",
-        descricao="Mapa logístico de Verhulst (Chaos): um valor por compasso da seleção, normalizado e usado como "
-                  "densidade de ataques entre o mínimo e o máximo.",
+    *[PatchAprovado(
+        procedimento=nome, biblioteca="chaos", funcao_om="Verhulst",
+        descricao=f"Mapa logístico de Verhulst (Chaos): um valor por compasso da seleção, normalizado e usado como "
+                  f"{alvo} entre o mínimo e o máximo.",
         entrada="uma linha: x0 lambda iteracoes (iteracoes = compassos - 1)",
         saida="saida.txt: os valores da série (iteracoes + 1), separados por espaço",
-        passos=_passos("densidade_caotica.lisp"),
-        montar=_chaos_montar, ler=_chaos_ler, autor="OpenMusic/Chaos", arquivo="patches/densidade_caotica.lisp", validado=True),
+        passos=_passos("chaos_verhulst.lisp"),
+        montar=_chaos_montar, ler=_chaos_ler(aplicar), autor="OpenMusic/Chaos", arquivo="patches/chaos_verhulst.lisp",
+        validado=True)  # a chamada ao OM é a mesma para os quatro alvos; o mapeamento é Python, testado
+      for nome, alvo, aplicar in [("densidade_caotica", "densidade de ataques", _densidade),
+                                  ("registro_caotico", "deslocamento de registro", _registro),
+                                  ("dinamica_caotica", "dinâmica", _dinamica),
+                                  ("duracoes_caoticas", "figura rítmica", _duracoes)]],
     PatchAprovado(
         procedimento="distribuir_restricoes", biblioteca="situation", funcao_om="Csolver + generic-cnstr",
         descricao="Situation (Csolver com domínios por variável): cada vaga de cada instrumento recebe uma altura da "
