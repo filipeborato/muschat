@@ -59,7 +59,7 @@ def test_metricas_descritivas_conferem_na_musicir_feita_a_mao():
     ir = quarteto()  # notas: Lá4+50c (1/2), tercinas Dó2, Sol2, Dó3 (1/6 cada); 1 compasso 4/4; 8 eventos
     m = metricas(ir)
     assert m["eventos"] == 8 and m["notas"] == 4
-    assert m["ataques_por_seminima"] == 1.0  # 4 ataques em 4 semínimas
+    assert m["ataques_por_seminima_somando_partes"] == 1.0  # 4 ataques em 4 semínimas
     assert m["ambito_midicents"] == [3600, 6950]
     assert m["duracoes"] == {"1/6": 3, "1/2": 1}
     assert m["desvio_intervalar_cents"] == 100.0  # intervalos 700 e 500 no violoncelo
@@ -87,8 +87,10 @@ def test_zip_contem_so_os_formatos_efetivamente_gerados():
     assert _nomes(pacote(c, 0)) == base  # sem LilyPond nem Verovio: nada de .ly, PDF ou SVG
     com_verovio = pacote(c, 0, svg="<svg/>")
     assert _nomes(com_verovio) == base | {"composicao_v1.svg"}
+    sem_gravacao = pacote(c, 0, lilypond={"grade": "x"}, gravacao=Gravacao(aviso="sem LilyPond"), svg="<svg/>")
+    assert _nomes(sem_gravacao) == base | {"composicao_v1.svg"}  # .ly só quando o LilyPond gravou
     gravacao = Gravacao(svgs=["<svg/>", "<svg/>"], pdfs={"grade": b"%PDF", "P1": b"%PDF"})
-    completo = pacote(c, 0, lilypond={"grade": "\score{}", "P1": "\score{}"}, gravacao=gravacao, svg="<svg/>")
+    completo = pacote(c, 0, lilypond={"grade": r"\score{}", "P1": r"\score{}"}, gravacao=gravacao, svg="<svg/>")
     assert _nomes(completo) == base | {"composicao_v1_grade.ly", "composicao_v1_P1.ly", "composicao_v1_grade.pdf",
                                        "composicao_v1_P1.pdf", "composicao_v1_grade-1.svg", "composicao_v1_grade-2.svg"}
 

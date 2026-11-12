@@ -3,12 +3,10 @@ perde. Tudo em Python puro sobre a MusicIR: nenhum motor externo é exigido para
 
 import io
 import json
-import platform
 import re
 import struct
 import zipfile
 from collections import Counter
-from importlib.metadata import PackageNotFoundError, version
 from statistics import pstdev
 
 from muschat.composicao import Composicao
@@ -40,7 +38,7 @@ def _vlq(n: int) -> bytes:
 
 
 def _ticks(t) -> int:
-    return round(t * 4 * TPQ)  # shortcut: quiálteras aninhadas que não dividem 480 arredondam ao tick
+    return round(t * 4 * TPQ)  # shortcut: quiálteras aninhadas que não dividem 480 arredondam ao tick; subir TPQ se aparecerem
 
 
 def _faixa(eventos: list[tuple[int, int, bytes]]) -> bytes:
@@ -57,6 +55,7 @@ def para_midi(ir: MusicIR) -> bytes:
     """SMF tipo 1, uma faixa por parte; andamentos e métricas na primeira. Só notas viram eventos (ver PERDAS)."""
     faixas = []
     for k, parte in enumerate(ir.partes):
+        # shortcut: acima de 15 partes os canais se repetem; usar porta/faixa por canal se orquestras grandes pedirem
         canal = _CANAIS[k % len(_CANAIS)]
         eventos: list[tuple[int, int, bytes]] = [(0, 0, b"\xff\x03" + _vlq(len(nome := parte.instrumento.encode()))
                                                   + nome)]
@@ -86,14 +85,15 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
     eventos = [e for _, _, e in ir.eventos()]
     notas = [e for e in eventos if isinstance(e, Nota)]
     alturas = [a.midicents for n in notas for a in n.alturas]
-    intervalos = [abs(b.alturas[0].midicents - a.alturas[0].midicents)
-                  for p in ir.partes for v in p.vozes
-                  for vn in [[e for e in v.eventos if isinstance(e, Nota)]] for a, b in zip(vn, vn[1:])]
+    intervalos = []
+    for _, voz in ((p, v) for p in ir.partes for v in p.vozes):
+        da_voz = [e for e in voz.eventos if isinstance(e, Nota)]
+        intervalos += [abs(b.alturas[0].midicents - a.alturas[0].midicents) for a, b in zip(da_voz, da_voz[1:])]
     seminimas = sum(c.comprimento for c in ir.compassos) * 4
     m = {
         "eventos": len(eventos),
         "notas": len(notas),
-        "ataques_por_seminima": round(float(len(notas) / seminimas), 3) if seminimas else 0.0,
+        "ataques_por_seminima_somando_partes": round(float(len(notas) / seminimas), 3) if seminimas else 0.0,
         "ambito_midicents": [min(alturas), max(alturas)] if alturas else None,
         "duracoes": {str(d): k for d, k in sorted(Counter(n.duracao for n in notas).items())},
         "desvio_intervalar_cents": round(pstdev(intervalos), 1) if intervalos else None,
@@ -104,17 +104,6 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
         d = comparar(anterior, ir)
         m["diff"] = {"adicionados": len(d.adicionados), "removidos": len(d.removidos), "alterados": len(d.alterados)}
     return m
-
-
-def dependencias() -> dict[str, str | None]:
-    """Versões das dependências Python que produzem e escrevem a música (vão no experimento de cada Versão)."""
-    def v(pacote: str) -> str | None:
-        try:
-            return version(pacote)
-        except PackageNotFoundError:
-            return None
-
-    return {"python": platform.python_version(), **{p: v(p) for p in ("abjad", "verovio", "google-genai")}}
 
 
 def experimento_json(c: Composicao, *, motores: dict[str, str] | None = None) -> str:
@@ -142,21 +131,20 @@ def _seguro(texto: str) -> str:
 
 def pacote(c: Composicao, indice: int, *, lilypond: dict[str, str] | None = None, gravacao: Gravacao | None = None,
            svg: str | None = None, motores: dict[str, str] | None = None) -> bytes:
-    """Zip da Versão `indice` só com o que foi produzido: MusicXML, MIDI e JSONs sempre; `.ly` se o Abjad escreveu;
-    PDF/SVG do LilyPond se ele gravou, senão o SVG do Verovio se houver."""
+    """Zip da Versão `indice` só com o que foi produzido: MusicXML, MIDI e JSONs sempre; `.ly`, PDF e SVG se o
+    LilyPond gravou, senão o SVG do Verovio se houver."""
     ir, nome = c.versoes[indice].ir, f"composicao_v{indice + 1}"
     arquivos: dict[str, str | bytes] = {f"{nome}.musicxml": para_musicxml(ir), f"{nome}.mid": para_midi(ir),
                                         "composicao.json": c.para_json(),
                                         "experimento.json": experimento_json(c, motores=motores)}
     formatos = ["musicxml", "midi", "json"]
-    for fonte, texto in (lilypond or {}).items():
-        arquivos[f"{nome}_{_seguro(fonte)}.ly"] = texto
-    if gravacao and gravacao.pdfs:
+    if gravacao and gravacao.pdfs:  # .ly só junto do que o LilyPond gravou a partir dele
+        arquivos |= {f"{nome}_{_seguro(fonte)}.ly": texto for fonte, texto in (lilypond or {}).items()}
         arquivos |= {f"{nome}_{_seguro(fonte)}.pdf": pdf for fonte, pdf in gravacao.pdfs.items()}
         arquivos |= {f"{nome}_grade-{k}.svg": s for k, s in enumerate(gravacao.svgs, 1)}
     elif svg:
         arquivos[f"{nome}.svg"] = svg
-    if lilypond or (gravacao and gravacao.pdfs):
+    if gravacao and gravacao.pdfs:
         formatos.insert(2, "lilypond")
     arquivos["PERDAS.txt"] = "\n\n".join(f"{f.upper()}: {PERDAS[f]}" for f in formatos) + "\n"
     saida = io.BytesIO()

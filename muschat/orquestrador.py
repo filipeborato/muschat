@@ -6,10 +6,12 @@ etapa anterior e os eventos criados/alterados ganham a proveniência do motor. U
 (Pendência na Composição); `retomar` importa a saída e segue dali. Falha em qualquer etapa: nenhuma Versão parcial.
 """
 
+import platform
 import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING
 
 from google.genai import types
@@ -17,7 +19,6 @@ from pydantic import ValidationError
 
 from muschat import prompts
 from muschat.composicao import Composicao, Pendencia, Versao
-from muschat.exportacao import dependencias
 from muschat.instrumentos import FAMILIAS, INSTRUMENTOS
 from muschat.musicir import MusicIR, Origem, Proveniencia, comparar, localizar
 from muschat.notacao.musicxml import para_musicxml
@@ -197,6 +198,17 @@ def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dic
         "intermediarios": [ir.model_dump(mode="json") for ir in ctx.intermediarios],
     }, anterior=ctx.base)
     return Resultado(resumo, versao)
+
+
+def dependencias() -> dict[str, str | None]:
+    """Versões das dependências Python que produzem e escrevem a música (proveniência de cada Versão)."""
+    def v(pacote: str) -> str | None:
+        try:
+            return version(pacote)
+        except PackageNotFoundError:
+            return None
+
+    return {"python": platform.python_version(), **{p: v(p) for p in ("abjad", "verovio", "google-genai")}}
 
 
 def _conferir(plano: Plano, antes: MusicIR | None, nova: MusicIR, *, origem: Origem, operacao: str) -> MusicIR:

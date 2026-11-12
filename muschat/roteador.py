@@ -76,7 +76,7 @@ def _escolher(procedimento: str, modo: Modo, registro: Registro) -> tuple[Motor,
         return "python", f"{procedimento}: Python/Abjad, o OpenMusic não tem esse procedimento aqui (R4)."
     automaticos = {m: c for m, c in disponiveis.items() if c.estado == "automatico"}
     if not automaticos:
-        raise SemRota("Esta operacao exige modo assistido explicito; selecione OpenMusic ou Hibrido.")
+        raise SemRota("esta operação exige modo assistido explícito; selecione OpenMusic ou Híbrido.")
     # R5 e R6: menos intervenção manual; empate fica com o Python
     escolhido = min(automaticos, key=lambda m: (PREFERENCIA[disponiveis[m].estado], m != "python"))
     outros = [m for m in disponiveis if m != escolhido]
@@ -85,6 +85,7 @@ def _escolher(procedimento: str, modo: Modo, registro: Registro) -> tuple[Motor,
         return escolhido, (f"{procedimento}: {NOME_DO_MOTOR[escolhido]} ({_estado(disponiveis[escolhido].estado)}). "
                            f"O {NOME_DO_MOTOR[o]} também faz, mas aqui é {_estado(disponiveis[o].estado)}; "
                            "o automático prefere menos intervenção manual (R5).")
+    # o Registro não lista patches de bibliotecas indisponíveis: com OM ligado, a situação vai sempre
     motivo = "" if registro.capacidade("OpenMusic") is None or escolhido == "openmusic" else f" {_situacao_om(registro)}"
     return escolhido, f"{procedimento}: {NOME_DO_MOTOR[escolhido]}, o único que executa aqui.{motivo}"
 

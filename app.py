@@ -240,7 +240,7 @@ def _exportar(c: Composicao):
                                                motores=motores),
                            on_click="ignore", width="stretch", type="primary")
         st.caption("PDF/.ly só se o LilyPond gravou; SVG do LilyPond ou, sem ele, do Verovio; MusicXML, MIDI, "
-                   "JSONs e PERDAS.txt sempre.")
+                   "JSONs e PERDAS.txt sempre. Cada formato perde o que está descrito abaixo e em PERDAS.txt.")
         st.download_button("MusicXML", data=lambda: para_musicxml(ir), file_name=f"{nome}.musicxml",
                            mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
         st.caption(PERDAS["musicxml"])

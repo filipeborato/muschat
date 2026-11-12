@@ -25,7 +25,7 @@ Built with [Streamlit](https://streamlit.io) and Google Gemini (`google-genai`).
 | Engraving with Abjad + LilyPond (score and parts as PDF), Verovio fallback | ✅ (LilyPond optional) |
 | Exports: MusicXML, MIDI, LilyPond/PDF/SVG, composition JSON (re-importable), experiment JSON, one `.zip` | ✅ |
 | Descriptive metrics and technical inspection panel per version | ✅ |
-| OpenMusic integration (assisted, file exchange, opt-in) | 🧪 experimental, Windows only |
+| OpenMusic integration (assisted, file exchange, opt-in) | 🧪 experimental, validated on Windows only |
 
 The UI is in Portuguese.
 
@@ -191,7 +191,7 @@ dependency versions (Python, Abjad, Verovio, google-genai), constraint violation
 and descriptive metrics. Versions of external engines (LilyPond, OpenMusic) appear only when detected.
 
 **Métricas descritivas** (in **Inspeção técnica**, next to the plan, router decision, steps, parameters and
-intermediate results): number of events and notes, attacks per quarter note, range in midicents, duration
+intermediate results): number of events and notes, attacks per quarter note summed over all parts, range in midicents, duration
 distribution, standard deviation of melodic intervals in cents, constraint violations and diff size. They describe
 the material; they are not an aesthetic or creativity score.
 
@@ -203,6 +203,9 @@ the PDFs; without it the score appears through Verovio and the zip has no PDF. A
 JSON is under **Composição → Arquivo da composição → dados do experimento**, and the full package under **Exportar**.
 
 The results below come from real runs on 2026-11-12 with `gemini-3.1-flash-lite`, LilyPond 2.26.0 and Windows 11.
+The requests went through the same turn function the app calls (`muschat.reasoning.responder`, real Gemini, real
+index), run from a script instead of the browser, and the outputs were saved with the same export functions. The
+experiment JSONs from those runs therefore have no `motores` entry; downloaded from the app, they list LilyPond.
 The model chooses the plan and the seed, so a rerun gives a different but comparable result. Re-applying a version
 with **Ajustar parâmetros e reaplicar** reuses its seed and is deterministic.
 
