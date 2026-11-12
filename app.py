@@ -5,6 +5,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
 import zipfile
 from pathlib import Path
 
@@ -20,11 +21,16 @@ from muschat.erros import mensagem_de_erro
 from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
-from muschat.orquestrador import reaplicar
+from muschat.orquestrador import descartar, reaplicar, retomar
 from muschat.procedimentos import CATALOGO
 from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
-from muschat.reasoning import responder
+from muschat.reasoning import exemplo_da_versao, responder
+from muschat.registro import NOME_DO_MOTOR, ROTULO_DO_ESTADO, Registro
+from muschat.registro import detectar as detectar_registro
+from muschat.roteador import MODOS
+from muschat.openmusic import detectar_openmusic
+from muschat.musicir import MusicIR
 
 load_dotenv()  # .env opcional; não sobrescreve variáveis já definidas
 
@@ -82,19 +88,106 @@ if "chat" not in st.session_state or "composicao" not in st.session_state:
     _nova_conversa()
 
 st.sidebar.button("Nova conversa", on_click=_nova_conversa, width="stretch")
+
+
+@st.cache_resource(show_spinner=False)
+def _lilypond(configurado: str | None) -> Lilypond | None:
+    return detectar(configurado)
+
+
+@st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar algo aparece em até 5 min
+def _registro() -> Registro:
+    try:
+        abjad_versao: str | None = version("abjad")
+    except PackageNotFoundError:
+        abjad_versao = None
+    return detectar_registro(lilypond=_lilypond(os.environ.get("LILYPOND")),
+                             openmusic=detectar_openmusic(os.environ.get("OPENMUSIC")), abjad_versao=abjad_versao)
+
+
+_ICONE = {"automatico": "🟢", "intercambio_arquivos": "🟡", "manual": "🟠", "indisponivel": "⚪"}
+
+st.sidebar.radio("Motor", list(MODOS), format_func=MODOS.__getitem__, key="modo", horizontal=True,
+                 help="Automático escolhe por regras explícitas; os outros são respeitados ou recusados com o motivo.")
+with st.sidebar.expander("Motores e bibliotecas"):
+    for cap in _registro().capacidades:
+        versao = f" {cap.versao}" if cap.versao else ""
+        st.markdown(f"{_ICONE[cap.estado]} **{cap.nome}**{versao} · {ROTULO_DO_ESTADO[cap.estado]}")
+        st.caption(cap.motivo)
 retriever, aviso_indice = _retriever(cfg.api_key, cfg.embed_model)
 if aviso_indice:
     _retriever.clear()  # não cacheia a falha: após a ingestão, o próximo rerun já acha o índice
     st.sidebar.caption(f"⚠️ {aviso_indice} Respostas sem base no acervo.")
 
 
+def _secao_pendente(c: Composicao):
+    """Etapa assistida do OpenMusic: o fluxo está parado esperando o compositor."""
+    p = c.pendente
+    if p is None or p.tarefa is None:
+        return
+    with st.sidebar.container(border=True):
+        st.warning(f"⏳ Aguardando você: etapa {p.etapa + 1} de {len(p.decisao.etapas)} no OpenMusic")
+        for k, e in enumerate(p.decisao.etapas):
+            estado = "feita" if k < p.etapa else "aguardando você" if k == p.etapa else "pendente"
+            st.caption(f"{k + 1}. {e.procedimento} · {NOME_DO_MOTOR[e.motor]} · {estado}")
+        with st.expander("Instruções"):
+            st.markdown(p.tarefa.instrucoes())
+        st.download_button("baixar tarefa (.zip)", data=p.tarefa.pacote(), file_name=f"{p.tarefa.id}.zip",
+                           mime="application/zip", on_click="ignore", width="stretch")
+        saida = st.file_uploader("saida.txt do OpenMusic", type=["txt"], key=f"saida-{p.tarefa.id}")
+        if st.button("Importar e continuar", disabled=saida is None, width="stretch", type="primary"):
+            assert saida is not None
+            resultado = retomar(c, saida.getvalue())
+            if resultado.versao:
+                st.session_state.messages.append({"role": "assistant", "content": resultado.resumo,
+                                                  "partituras": [asdict(exemplo_da_versao(resultado.versao))]})
+                st.rerun()
+            st.error(resultado.resumo)
+        st.button("Descartar tarefa", on_click=descartar, args=(c,), width="stretch")
+
+
+def _inspecao(c: Composicao):
+    assert c.atual is not None
+    exp = c.atual.experimento
+    for k, e in enumerate(exp.get("etapas", []), 1):
+        st.caption(f"{k}. {e['procedimento']} · {NOME_DO_MOTOR.get(e['motor'], e['motor'])} · {e['estado']}")
+    with st.expander("Inspeção técnica"):
+        for linha in exp.get("decisao", {}).get("justificativa", []):
+            st.markdown(f"- {linha}")
+        st.json({k: v for k, v in exp.items() if k != "intermediarios"}, expanded=False)
+        for k, dump in enumerate(exp.get("intermediarios", []), 1):
+            st.download_button(f"intermediário da etapa {k} (.musicxml)",
+                               data=para_musicxml(MusicIR.model_validate(dump)),
+                               file_name=f"etapa_{k}.musicxml", mime="application/vnd.recordare.musicxml+xml",
+                               key=f"inter-{c.indice}-{k}", on_click="ignore")
+
+
+def _arquivo_json(c: Composicao):
+    """Salvar e abrir a composição (Versões + etapa pendente) em JSON."""
+    with st.popover("Arquivo da composição (.json)", width="stretch"):
+        st.download_button("salvar composição", data=c.para_json(), file_name="composicao.json",
+                           mime="application/json", on_click="ignore", width="stretch",
+                           disabled=not c.versoes and c.pendente is None)
+        arquivo = st.file_uploader("abrir composição", type=["json"], key="abrir-composicao")
+        if arquivo is not None and st.button("Abrir (substitui a atual)", width="stretch"):
+            try:
+                st.session_state.composicao = Composicao.de_json(arquivo.getvalue().decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:  # pydantic.ValidationError é ValueError
+                st.error(f"Arquivo recusado: {str(exc).splitlines()[0]}")
+            else:
+                st.rerun()
+
+
 def _secao_composicao(c: Composicao):
-    with st.sidebar.expander("Composição", expanded=c.atual is not None):
+    _secao_pendente(c)
+    with st.sidebar.expander("Composição", expanded=c.atual is not None or c.pendente is not None):
+        _arquivo_json(c)
         if c.atual is None or c.indice is None:
             st.caption("Nenhuma composição ainda. Peça, por exemplo: \"crie oito compassos para quarteto de cordas "
                        "a partir de parciais harmônicos\".")
             return
         st.markdown(f"**Versão atual: {c.indice + 1}**  \n{c.atual.resumo}")
+        _inspecao(c)
         st.button("Desfazer", on_click=c.desfazer, disabled=c.atual.anterior is None, width="stretch")
         _ajustar(c)
         st.download_button("baixar versão atual (.musicxml)", data=para_musicxml(c.atual.ir),
@@ -133,7 +226,7 @@ def _ajustar(c: Composicao):
                 max_value=float(faixas[p].maximo), value=float(v), step=1.0 if faixas[p].inteiro else 0.05,
                 key=f"ajuste-{c.indice}-{k}-{p}")) for p, v in params.items()})
         if st.button("Reaplicar", width="stretch", key=f"reaplicar-{c.indice}"):
-            resultado = reaplicar(c, novos)
+            resultado = reaplicar(c, novos, registro=_registro())
             (st.toast if resultado.versao else st.error)(resultado.resumo)
             if resultado.versao:
                 st.rerun()
@@ -142,11 +235,6 @@ def _ajustar(c: Composicao):
 @st.cache_data(max_entries=64, show_spinner=False)
 def _svg(musicxml: str) -> str | None:
     return svg_de(musicxml)
-
-
-@st.cache_resource(show_spinner=False)
-def _lilypond(configurado: str | None) -> Lilypond | None:
-    return detectar(configurado)
 
 
 @st.cache_data(max_entries=16, show_spinner="Gravando a partitura com o LilyPond...")
@@ -226,6 +314,8 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                     retriever=retriever,
                     modelo=cfg.model,
                     composicao=st.session_state.composicao,
+                    modo=st.session_state.modo,
+                    registro=_registro(),
                 )
         except Exception as exc:
             if (erro := mensagem_de_erro(exc)) is None:

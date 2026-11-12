@@ -69,6 +69,13 @@ newer (2.26 works) and put it on `PATH`, or set `LILYPOND=<path to lilypond.exe>
 scores are rendered by Verovio from MusicXML and the app says what is lost. On Windows the app also finds an
 unzipped release in `%LOCALAPPDATA%\Programs\lilypond-*`.
 
+Optional, for the OpenMusic engine: install [OpenMusic 8.0](https://github.com/openmusic-project/openmusic/releases)
+and the libraries you use in `~/OM/Libraries/` (the spectral procedure needs
+[Esquisse](https://github.com/openmusic-project/Esquisse/releases)). The app finds `C:\Program Files\OpenMusic*`
+or the path in `OPENMUSIC`. OpenMusic runs **assisted** (see `docs/adr/0001-integracao-openmusic-assistida.md`):
+Muschat prepares a task folder under `.muschat/openmusic/` with the input numbers and step-by-step instructions, you
+run the approved patch in OpenMusic and upload `saida.txt`, and the composition resumes from there.
+
 Without an index the chat still works and says it is answering from general knowledge.
 
 `.env`:
@@ -129,7 +136,14 @@ Paste these into the chat to exercise the current features:
     buttons for the `.ly`, the score PDF and one PDF per instrument. Then `Deixe os compassos finais mais
     fragmentados.` shows the operational hypothesis in the answer and in the sidebar, and changes only the final
     bars; **Ajustar parâmetros e reaplicar** changes a number and re-runs it.
-11. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
+11. **Engines**: in the sidebar pick **Motor**. *Automático* explains its choice in the answer (with OpenMusic only
+    assisted, it picks Python for the harmonic series and says why). *OpenMusic* with `Produza uma sequência
+    intervalar derivada de um espectro harmônico e utilize-a para criar material musical.` stops at **Aguardando
+    você** with a task to download; *Híbrido* with `Use um procedimento espectral do OpenMusic para produzir
+    material de alturas e organize esse material para quarteto de cordas utilizando Python e Abjad.` runs the
+    OpenMusic step, then, after you upload `saida.txt`, the Python orchestration and the engraving. **Motores e
+    bibliotecas** lists each engine and library with its real state and what is missing.
+12. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
 
 ## Troubleshooting
 
@@ -172,7 +186,11 @@ muschat/restricoes.py     constraint checker (range, forbidden interval, no unis
 muschat/instrumentos.py   orchestral instrument table: family, clef and sounding range (strings, woodwinds,
                           brass, pitched and unpitched percussion, keyboards, harp, guitar, voices)
 muschat/notacao/lilypond.py  MusicIR -> Abjad -> LilyPond text; LilyPond detection and engraving (PDF/SVG)
-muschat/orquestrador.py   composition turn: plan -> catalog checks -> procedure -> preservation check -> version
+muschat/orquestrador.py   composition turn: plan -> router -> list of steps (pause at an OpenMusic step, resume
+                          after import) -> preservation check per step -> version
+muschat/registro.py       capability registry: what each engine/library/engraver can do on this machine, and how
+muschat/roteador.py       explicit, ordered routing rules (docs/adr/0002-regras-do-roteador.md)
+muschat/openmusic.py      OpenMusic bridge (assisted): install detection, approved patches, task, output import
 muschat/composicao.py     session composition: versions, undo, go back, compare
 muschat/notacao/          example schema -> MusicIR, extended-technique table by instrument family, MusicXML
                           builder, Verovio renderer

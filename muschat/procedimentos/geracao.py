@@ -1,4 +1,4 @@
-"""Procedimentos que criam material: série harmônica e distribuição entre instrumentos."""
+"""Procedimentos que criam material: série harmônica, orquestração de um material e distribuição."""
 
 import math
 import random
@@ -16,12 +16,28 @@ def serie_harmonica(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],
     """Parciais 1..n da fundamental, aproximados, distribuídos por tessitura; ritmo sorteado em 4/4."""
     passo = 100 // 2 ** int(p["microtom"])
     parciais = [round((p["fundamental"] + 1200 * math.log2(n)) / passo) * passo for n in range(1, int(p["parciais"]) + 1)]
+    return _orquestrar(parciais, plano, p, rng, f"Série harmônica sobre {p['fundamental']:.0f} mc")
+
+
+def orquestrar_material(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],
+                        rng: random.Random) -> ir.MusicIR:
+    """As alturas da composição atual (ex.: o material espectral vindo do OpenMusic) como reservatório de uma peça
+    nova para os instrumentos do plano, respeitando a tessitura."""
+    atual = exigir(atual)
+    alturas = sorted({a.midicents for _, _, e in atual.eventos() if isinstance(e, ir.Nota) for a in e.alturas})
+    if not alturas:
+        raise ValueError("orquestrar_material precisa de notas na composição atual")
+    return _orquestrar(alturas, plano, p, rng, f"{atual.titulo} — orquestrado")
+
+
+def _orquestrar(reservatorio: list[int], plano: Plano, p: dict[str, float], rng: random.Random,
+                titulo: str) -> ir.MusicIR:
     prov = ir.Proveniencia(origem="algoritmo")
     partes = []
     for k, nome in enumerate(plano.instrumentos or QUARTETO, 1):
         inst = instrumento(nome)
         clave, tessitura = inst.clave, inst.tessitura
-        alturas = sorted({no_registro(a, tessitura) for a in parciais})
+        alturas = sorted({no_registro(a, tessitura) for a in reservatorio})
         eventos: list[ir.Evento] = []
         inicio = Fraction(0)
         for _ in range(int(p["compassos"])):
@@ -40,7 +56,7 @@ def serie_harmonica(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],
     # shortcut: sempre 4/4 a 60; métrica e andamento viram parâmetros quando um pedido precisar
     compassos = [ir.Compasso(numerador=4, denominador=4, andamento=60 if n == 0 else None)
                  for n in range(int(p["compassos"]))]
-    return ir.MusicIR(titulo=f"Série harmônica sobre {p['fundamental']:.0f} mc", compassos=compassos, partes=partes)
+    return ir.MusicIR(titulo=titulo, compassos=compassos, partes=partes)
 
 
 def distribuir(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:

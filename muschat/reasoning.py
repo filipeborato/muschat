@@ -9,13 +9,15 @@ from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
 from muschat import prompts
-from muschat.composicao import Composicao
+from muschat.composicao import Composicao, Versao
 from muschat.notacao.modelo import Partitura, para_ir
 from muschat.musicir import MusicIR
 from muschat.notacao.lilypond import para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.tecnicas import TECNICAS
 from muschat.orquestrador import compor
+from muschat.registro import Registro
+from muschat.roteador import Modo
 from muschat.seguranca import neutralizar as _neutralizar
 
 
@@ -115,6 +117,8 @@ def responder(
     modelo: str,
     k: int = 6,
     composicao: Composicao | None = None,
+    modo: Modo = "automatico",
+    registro: Registro | None = None,
 ) -> Resposta:
     pergunta_segura = _neutralizar(pergunta)
 
@@ -126,10 +130,10 @@ def responder(
     operacao = "nenhuma"
     if analise.notacao == "compor":
         composicao = composicao if composicao is not None else Composicao()  # sem sessão: vale só para este turno
-        resultado = compor(pergunta_segura, composicao, gerador=gerador, chat=chat, modelo=modelo)
-        operacao, v = resultado.resumo, resultado.versao
-        partituras = [Exemplo(v.ir.titulo, para_musicxml(v.ir), f"Composição da conversa — {v.resumo}", "composicao",
-                              _lilypond_ou_nada(v.ir))] if v else []
+        resultado = compor(pergunta_segura, composicao, gerador=gerador, chat=chat, modelo=modelo, modo=modo,
+                           registro=registro)
+        operacao = resultado.resumo
+        partituras = [exemplo_da_versao(resultado.versao)] if resultado.versao else []
     else:
         partituras = _partituras(pergunta_segura, analise, trechos, gerador=gerador, chat=chat, modelo=modelo)
 
@@ -229,6 +233,12 @@ def _formatar(t: Trecho) -> str:
 
 def _atributo(valor: str) -> str:
     return _neutralizar(valor).replace('"', "'")
+
+
+def exemplo_da_versao(v: Versao) -> Exemplo:
+    """Partitura de uma Versão da composição para o chat (MusicXML sempre; LilyPond quando o Abjad conseguir)."""
+    return Exemplo(v.ir.titulo, para_musicxml(v.ir), f"Composição da conversa — {v.resumo}", "composicao",
+                   _lilypond_ou_nada(v.ir))
 
 
 def _lilypond_ou_nada(ir: MusicIR) -> dict[str, str]:

@@ -50,6 +50,7 @@ class Plano(BaseModel):
                                  '"fragmentado = densidade 1 -> 3 ataques/semínima nos compassos 7-8".')
     operacoes: list[Operacao] = Field(min_length=1, max_length=8)
     selecao: Selecao = Field(default_factory=Selecao)
-    motor: Literal["automatico", "python", "openmusic"] = "automatico"
+    motor: Literal["automatico", "python", "openmusic", "hibrido"] = Field(
+        default="automatico", description="Só se o usuário pedir um motor; senão automatico.")
     criterios: list[str] = Field(default_factory=list, description="Critérios de validação do resultado.")
     semente: int | None = Field(default=None, description="Só quando o usuário pede reprodução de uma semente.")

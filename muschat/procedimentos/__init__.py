@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from muschat import musicir as ir
 from muschat.plano import Plano
-from muschat.procedimentos.geracao import distribuir, serie_harmonica
+from muschat.procedimentos.geracao import distribuir, orquestrar_material, serie_harmonica
 from muschat.procedimentos.melodicos import intervalos, inverter, retrogradar, rotacionar, transpor
 from muschat.procedimentos.progressivos import (
     aplicar_tecnicas, densidade, dinamica_progressiva, registro_progressivo,
@@ -58,6 +58,16 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
         },
         serie_harmonica,
         requer_composicao=False,
+    ),
+    Procedimento(
+        "orquestrar_material",
+        "Cria uma peça nova a partir das alturas da composição atual (ex.: material espectral importado do "
+        "OpenMusic): elas viram o reservatório dos instrumentos do plano, respeitando a tessitura, ritmo sorteado.",
+        {
+            "compassos": Faixa(1, 32, 8, "número de compassos 4/4"),
+            "pausas": Faixa(0, 0.9, 0.15, "proporção de pausas", inteiro=False),
+        },
+        orquestrar_material,
     ),
     Procedimento("transpor", "Transpõe as notas da seleção; o ritmo fica.",
                  {"intervalo": Faixa(-2400, 2400, 0, "intervalo (100 = semitom)", unidade="cents")}, transpor),
