@@ -317,7 +317,8 @@ turn it into notes (`eventos_do_espectro`), tested with fakes only; no SuperVP p
 - OpenMusic runs assisted only (no headless or GUI automation) and has only been validated on Windows. Approved
   patches: harmonic series (Esquisse), Verhulst density (Chaos), constrained distribution (Situation), additive
   synthesis (OMChroma). The Situation solver has no time limit inside OpenMusic, so Muschat only sends problems that
-  have a solution.
+  have a solution. Every OpenMusic step stays assisted; only the Csound rendering of the OMChroma files, after you
+  upload `saida.txt`, runs automatically (with a timeout).
 - The Streamlit UI is checked manually (plus `streamlit.testing` smoke runs), not by the automated suite.
 - On the free Gemini tier, requests per minute are limited, and a composition turn costs three calls (analysis, plan
   and answer).

@@ -26,8 +26,9 @@ def eventos_do_espectro(atual: ir.MusicIR | None, plano: Plano, p: dict[str, flo
     novas = []
     for k, nome in enumerate(nomes, 1):
         inst = instrumento(nome)
-        pid = next(f"E{k}" if n == 0 else f"E{k}.{n}" for n in range(len(usados) + 1)
-                   if (f"E{k}" if n == 0 else f"E{k}.{n}") not in usados)
+        pid = f"E{k}"
+        while pid in usados:
+            pid += "b"
         usados.add(pid)
         eventos: list[ir.Evento] = []
         cursor = Fraction(0)

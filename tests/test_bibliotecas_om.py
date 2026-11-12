@@ -126,10 +126,35 @@ def test_sintese_envia_parciais_e_acrescenta_parte_eletronica_sem_notas(tmp_path
     v = retomar(c, str(n)).versao
     assert v is not None
     eletronica = v.ir.partes[-1]
-    assert eletronica.instrumento.startswith("Eletrônica") and "muschat.orc" in eletronica.instrumento  # sem áudio
+    assert eletronica.instrumento == "Eletrônica (síntese aditiva)"
+    assert "muschat.orc" in eletronica.vozes[0].eventos[0].descricao  # sem .orc/.sco: diz por que não há áudio
     eventos = [e for voz in eletronica.vozes for e in voz.eventos]
     assert {e.tipo for e in eventos} == {"eletronico", "curva"}  # nunca nota falsa
     assert v.ir.partes[:4] == c.versoes[0].ir.partes  # as partes instrumentais não mudam
+
+
+def test_registro_e_render_usam_o_mesmo_csound(monkeypatch):
+    monkeypatch.setenv("CSOUND", "D:/csound/bin/csound.exe")
+    reg = detectar(lilypond=None, openmusic=OM, abjad_versao="3.31", which=lambda e: None, patches=APROVADOS)
+    assert reg.capacidade("Csound").estado == "automatico" and "D:/csound" in reg.capacidade("Csound").motivo
+
+
+def test_patch_sem_arquivo_nao_vira_tarefa(tmp_path):
+    import pytest
+    from muschat.openmusic import criar_tarefa
+    with pytest.raises(ValueError):
+        criar_tarefa("analise_supervp", {"parciais": 4, "quadros": 2}, raiz=tmp_path)
+    assert not any(tmp_path.iterdir())
+
+
+def test_saidas_reais_do_openmusic_importam(tmp_path):
+    """Teste condicional real: as saídas gravadas pelo OM 8.0 na validação (docs/pesquisa/evidencias-openmusic)."""
+    evid = Path("docs/pesquisa/evidencias-openmusic")
+    chaos = [float(x) for x in (evid / "chaos-saida.txt").read_text().split()]
+    assert chaos == [round(v, 10) for v in _verhulst(0.1, 2.8, 3)]
+    c, r, _ = _situation(tmp_path)
+    v = retomar(c, (evid / "situation-saida.txt").read_text()).versao
+    assert v is not None and len({e.alturas[0].midicents for p in v.ir.partes for e in p.vozes[0].eventos}) == 12
 
 
 def test_csound_ausente_ou_sem_arquivos_nao_gera_audio_e_diz_por_que(tmp_path):
@@ -150,7 +175,7 @@ def test_csound_real_renderiza_orc_e_sco(tmp_path):
         pytest.skip("Csound não instalado")
     (tmp_path / "muschat.orc").write_text(_ORC)
     (tmp_path / "muschat.sco").write_text("i1 0 0.2 440\n")
-    assert renderizar(tmp_path, csound()).startswith("áudio em"), renderizar(tmp_path, csound())
+    assert renderizar(tmp_path, csound()).startswith("áudio: muschat.wav"), renderizar(tmp_path, csound())
     assert (tmp_path / "muschat.wav").stat().st_size > 1000
 
 
@@ -168,7 +193,8 @@ def test_supervp_ausente_fica_indisponivel_com_o_motivo():
     assert "analise_supervp" not in sem.disponiveis()
 
 
-def test_dado_espectral_importado_vira_evento_espectral_e_depois_notas(tmp_path):
+def test_dado_espectral_importado_vira_evento_espectral_e_depois_notas(tmp_path, monkeypatch):
+    monkeypatch.setitem(PATCHES, "analise_supervp", replace(PATCHES["analise_supervp"], arquivo=__file__))
     plano = _plano("analise_supervp", {"parciais": 2, "quadros": 2})
     plano["operacoes"].append({"procedimento": "eventos_do_espectro",
                                "parametros": [{"nome": "alturas_por_quadro", "valor": 2}]})

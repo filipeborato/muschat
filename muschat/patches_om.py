@@ -16,7 +16,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from muschat import musicir as ir
-from muschat.instrumentos import instrumento, no_registro
+from muschat.instrumentos import instrumento
 from muschat.plano import Plano
 from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir
 from muschat.procedimentos.progressivos import densidade_por_compasso
@@ -25,6 +25,7 @@ from muschat.restricoes import Restricao, verificar
 SEM_SOLUCAO, FALHOU = -1.0, -2.0
 LIMITE_COMPONENTES = 5000  # parciais enviados ao OMChroma numa tarefa
 TIMEOUT_CSOUND = 300  # s
+LIMITE_AUDIO = 200_000_000  # bytes de .wav aceitos (~19 min mono 44,1 kHz/16 bits)
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class PatchAprovado:
     passos: tuple[str, ...]
     montar: Montar
     ler: Ler
+    autor: str  # vai na proveniência dos eventos importados
     arquivo: str | None = None  # patch do projeto (patches/); None = ainda não escrito
     validado: bool = False  # True só depois de rodar no OpenMusic real com a saída conferida (docs/pesquisa)
 
@@ -235,8 +237,9 @@ def _hz(midicents: int) -> float:
     return 440.0 * 2 ** ((midicents - 6900) / 1200)
 
 
+# shortcut: um andamento só (o primeiro da peça); converter compasso a compasso quando houver mudanças de andamento
 def _segundos(atual: ir.MusicIR) -> float:
-    """Segundos por semibreve. # shortcut: um andamento só (o primeiro); mudanças de andamento quando pedidas."""
+    """Segundos por semibreve."""
     bpm = next((c.andamento for c in atual.compassos if c.andamento), 60)
     return 4 * 60 / bpm
 
@@ -245,6 +248,12 @@ def _notas_selecionadas(atual: ir.MusicIR, plano: Plano | None) -> list[ir.Nota]
     locais = ir.localizar(atual)
     return sorted((e for p, v, e in atual.eventos() if isinstance(e, ir.Nota)
                    and (plano is None or plano.selecao.contem(*locais[e.id]))), key=lambda e: e.inicio)
+
+
+def _parciais(p: dict[str, float], inicio: Fraction, total: Fraction) -> int:
+    """Parciais por nota no ponto `inicio` da peça: rampa do inicial ao final (densidade espectral crescente)."""
+    t = float(inicio / total) if total else 0.0
+    return max(1, round(p["parciais_inicial"] + (p["parciais_final"] - p["parciais_inicial"]) * t))
 
 
 def componentes(atual: ir.MusicIR, plano: Plano | None, p: dict[str, float]) -> list[tuple[float, float, float, float]]:
@@ -256,11 +265,10 @@ def componentes(atual: ir.MusicIR, plano: Plano | None, p: dict[str, float]) -> 
     sps, total = _segundos(atual), sum(c.comprimento for c in atual.compassos)
     saida = []
     for n in notas:
-        t = float(n.inicio / total) if total else 0.0
-        k = round(p["parciais_inicial"] + (p["parciais_final"] - p["parciais_inicial"]) * t)
+        k = _parciais(p, n.inicio, total)
         for a in n.alturas:
             f0 = _hz(a.midicents)
-            for j in range(1, max(k, 1) + 1):
+            for j in range(1, k + 1):
                 if f0 * j < 20000:
                     saida.append((float(n.inicio) * sps, float(n.duracao) * sps, f0 * j,
                                   p["amplitude"] - 6 * math.log2(j)))
@@ -274,9 +282,9 @@ def _chroma_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano |
     return f"{len(comps)}\n" + "".join(f"{t:.6f} {d:.6f} {f:.6f} {a:.6f}\n" for t, d, f, a in comps)
 
 
-def csound() -> str | None:
-    """Executável do Csound: CSOUND (caminho) ou o PATH."""
-    return os.environ.get("CSOUND") or shutil.which("csound")
+def csound(which=shutil.which) -> str | None:
+    """Executável do Csound: CSOUND (caminho) ou o PATH. O Registro usa o mesmo critério."""
+    return os.environ.get("CSOUND") or which("csound")
 
 
 def renderizar(pasta: Path, executavel: str | None, *, timeout: float = TIMEOUT_CSOUND) -> str:
@@ -287,8 +295,9 @@ def renderizar(pasta: Path, executavel: str | None, *, timeout: float = TIMEOUT_
     if executavel is None:
         return "áudio não gerado: Csound não encontrado (instale-o ou defina CSOUND)"
     try:
-        subprocess.run([executavel, "-W", "-o", wav.name, orc.name, sco.name], cwd=pasta, capture_output=True,
-                       text=True, timeout=timeout, check=True)
+        # -d sem gráficos, -m0 sem mensagens por evento: a saída capturada fica pequena
+        subprocess.run([executavel, "-d", "-m0", "-W", "-o", wav.name, orc.name, sco.name], cwd=pasta,
+                       capture_output=True, text=True, timeout=timeout, check=True)
     except subprocess.TimeoutExpired:
         return f"áudio não gerado: o Csound passou de {timeout:g} s"
     except (subprocess.CalledProcessError, OSError) as exc:
@@ -296,7 +305,10 @@ def renderizar(pasta: Path, executavel: str | None, *, timeout: float = TIMEOUT_
         return f"áudio não gerado: o Csound falhou ({detalhe})"
     if not wav.is_file() or wav.stat().st_size == 0:
         return "áudio não gerado: o Csound não produziu muschat.wav"
-    return f"áudio em {wav}"
+    if wav.stat().st_size > LIMITE_AUDIO:
+        wav.unlink()
+        return f"áudio descartado: passou de {LIMITE_AUDIO // 1_000_000} MB"
+    return f"áudio: muschat.wav na pasta da tarefa ({pasta.name})"
 
 
 def _chroma_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
@@ -311,17 +323,16 @@ def _chroma_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
     ids = Ids(atual)
     parte_id = ids.novo("ELE")
     cues: list[ir.Evento] = []
-    for inicio in sorted({n.inicio for n in notas}):
-        juntas = [n for n in notas if n.inicio == inicio]
-        t = float(inicio / total) if total else 0.0
-        k = round(p["parciais_inicial"] + (p["parciais_final"] - p["parciais_inicial"]) * t)
+    for n, inicio in enumerate(sorted({n.inicio for n in notas})):
+        juntas = [x for x in notas if x.inicio == inicio]
+        descricao = (f"síntese aditiva: {len(juntas)} nota(s), até {_parciais(p, inicio, total)} parciais "
+                     "(os acima de 20 kHz ficam de fora)")
         cues.append(ir.Eletronico(id=ids.novo(f"{parte_id}C"), inicio=inicio, duracao=Fraction(0),
-                                  proveniencia=ctx.proveniencia,
-                                  descricao=f"síntese aditiva: {len(juntas)} nota(s), {k} parciais"))
+                                  proveniencia=ctx.proveniencia, descricao=descricao + (f"; {audio}" if n == 0 else "")))
     curva = ir.Curva(id=ids.novo(f"{parte_id}K"), inicio=Fraction(0), duracao=total, proveniencia=ctx.proveniencia,
                      parametro="parciais por nota",
                      pontos=[(Fraction(0), p["parciais_inicial"]), (total, p["parciais_final"])])
-    eletronica = ir.Parte(id=parte_id, instrumento=f"Eletrônica (síntese aditiva; {audio})", clave="percussao",
+    eletronica = ir.Parte(id=parte_id, instrumento="Eletrônica (síntese aditiva)", clave="percussao",
                           vozes=[ir.Voz(id=f"{parte_id}V1", eventos=cues), ir.Voz(id=f"{parte_id}V2", eventos=[curva])])
     return atual.model_copy(update={"partes": [*atual.partes, eletronica]})
 
@@ -363,7 +374,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="uma linha: fundamental_em_midicents numer denom begin end (ex.: 3600 1 1 1 16)",
         saida="saida.txt: a lista de midicents, separados por espaço (parênteses são aceitos)",
         passos=_passos("serie_harmonica.lisp", " Usa Midics (1) e Chord (1)."),
-        montar=_serie_montar, ler=_serie_ler, arquivo="patches/serie_harmonica.lisp", validado=True),
+        montar=_serie_montar, ler=_serie_ler, autor="OpenMusic/Esquisse", arquivo="patches/serie_harmonica.lisp", validado=True),
     PatchAprovado(
         procedimento="densidade_caotica", biblioteca="chaos", funcao_om="Verhulst",
         descricao="Mapa logístico de Verhulst (Chaos): um valor por compasso da seleção, normalizado e usado como "
@@ -371,7 +382,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="uma linha: x0 lambda iteracoes (iteracoes = compassos - 1)",
         saida="saida.txt: os valores da série (iteracoes + 1), separados por espaço",
         passos=_passos("densidade_caotica.lisp"),
-        montar=_chaos_montar, ler=_chaos_ler, arquivo="patches/densidade_caotica.lisp", validado=True),
+        montar=_chaos_montar, ler=_chaos_ler, autor="OpenMusic/Chaos", arquivo="patches/densidade_caotica.lisp", validado=True),
     PatchAprovado(
         procedimento="distribuir_restricoes", biblioteca="situation", funcao_om="Csolver + generic-cnstr",
         descricao="Situation (Csolver com domínios por variável): cada vaga de cada instrumento recebe uma altura da "
@@ -379,7 +390,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="N; depois uma linha por vaga: tamanho do domínio seguido das alturas possíveis (midicents)",
         saida="saida.txt: N alturas na ordem das vagas, ou -1 se não houver solução",
         passos=_passos("distribuir_restricoes.lisp"),
-        montar=_situation_montar, ler=_situation_ler, arquivo="patches/distribuir_restricoes.lisp", validado=True),
+        montar=_situation_montar, ler=_situation_ler, autor="OpenMusic/Situation", arquivo="patches/distribuir_restricoes.lisp", validado=True),
     PatchAprovado(
         procedimento="sintese_aditiva", biblioteca="omchroma", funcao_om="add-1 + synthesize (:run nil)",
         descricao="OMChroma: cada nota vira parciais de síntese aditiva (classe add-1); o OMChroma escreve "
@@ -387,7 +398,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="N; depois N linhas: início (s) duração (s) frequência (Hz) amplitude (dB)",
         saida="saida.txt: N (parciais escritos); muschat.orc e muschat.sco na pasta da tarefa",
         passos=_passos("sintese_aditiva.lisp", " Também grava muschat.orc e muschat.sco."),
-        montar=_chroma_montar, ler=_chroma_ler, arquivo="patches/sintese_aditiva.lisp", validado=True),
+        montar=_chroma_montar, ler=_chroma_ler, autor="OpenMusic/OMChroma", arquivo="patches/sintese_aditiva.lisp", validado=True),
     PatchAprovado(
         procedimento="analise_supervp", biblioteca="om-supervp", funcao_om="supervp (análise de parciais)",
         descricao="OM-SuperVP: análise de parciais de um som escolhido no OpenMusic (o arquivo de som não é "
@@ -395,5 +406,5 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="uma linha: parciais quadros",
         saida="saida.txt: N seguido de N trincas tempo (s) frequência (Hz) amplitude",
         passos=_passos("analise_supervp.lisp"),
-        montar=_supervp_montar, ler=_supervp_ler),  # sem arquivo: SuperVP não disponível para validar o patch
+        montar=_supervp_montar, ler=_supervp_ler, autor="OpenMusic/OM-SuperVP"),  # sem arquivo: SuperVP não disponível para validar o patch
 ]}

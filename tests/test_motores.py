@@ -95,7 +95,8 @@ def test_experimento_d_decisao_e_justificativa_registradas(modo, registro, opera
     assert len(decisao.justificativa) == len(operacoes) and all(decisao.justificativa)
 
 
-def test_registro_detecta_bibliotecas_e_dependencias_externas(tmp_path):
+def test_registro_detecta_bibliotecas_e_dependencias_externas(tmp_path, monkeypatch):
+    monkeypatch.delenv("CSOUND", raising=False)
     raiz = tmp_path / "OpenMusic 8.0"
     raiz.mkdir()
     (raiz / "OM 8.0.exe").write_bytes(b"")

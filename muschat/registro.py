@@ -12,6 +12,7 @@ from typing import Literal
 
 from muschat.notacao.lilypond import Lilypond
 from muschat.openmusic import PATCHES, InstalacaoOM, PatchAprovado
+from muschat.patches_om import csound
 from muschat.procedimentos import CATALOGO
 
 NATIVOS = tuple(n for n, p in CATALOGO.items() if p.funcao is not None)  # o que o motor Python executa
@@ -114,7 +115,7 @@ def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad
             limitacoes="cada etapa espera o compositor"))
     for nome, exe, uso in (("Csound", "csound", "renderiza o áudio da síntese do OMChroma (.orc/.sco -> .wav)"),
                            ("SuperVP", "supervp", "análise de som do OM-SuperVP (IRCAM Forum, licença própria)")):
-        caminho = which(exe)
+        caminho = csound(which) if exe == "csound" else which(exe)
         caps.append(Capacidade(nome, "externo", "automatico" if caminho else "indisponivel",
                                f"em {caminho}; {uso}" if caminho else f"executável {exe} não encontrado no PATH; {uso}"))
     for nome, (chave, externos) in _BIBLIOTECAS_OM.items():

@@ -118,6 +118,7 @@ class Tarefa(BaseModel):
         return PATCHES[self.procedimento]
 
     def entrada(self) -> str:
+        # sem `conteudo` só existem JSONs antigos da série harmônica, cuja entrada vem só dos parâmetros
         return self.conteudo if self.conteudo is not None else self.patch.montar(self.parametros, None, None)
 
     def instrucoes(self) -> str:
@@ -125,11 +126,10 @@ class Tarefa(BaseModel):
         passos = "\n".join(f"{n}. {s}" for n, s in enumerate(p.passos, 1))
         arquivo = (f"Patch aprovado: `{p.arquivo}` (copiado nesta pasta)." if p.arquivo else
                    "Este patch ainda não foi validado no OpenMusic real e não está no projeto.")
-        conteudo = self.entrada().strip()
-        if len(conteudo) > 400:
-            conteudo = f"{conteudo[:400]}… ({len(conteudo.splitlines())} linhas)"
+        linhas = self.entrada().strip().splitlines()
+        conteudo = "\n".join(linhas[:8]) + (f"\n… ({len(linhas)} linhas)" if len(linhas) > 8 else "")
         return (f"# Tarefa OpenMusic {self.id}: {p.funcao_om} ({p.biblioteca})\n\n{p.descricao}\n\n{arquivo}\n\n"
-                f"Entrada (`entrada.txt`): {p.entrada}\nConteúdo: `{conteudo}`\n\n"
+                f"Entrada (`entrada.txt`): {p.entrada}\n\n```\n{conteudo}\n```\n\n"
                 f"Saída esperada: {p.saida}.\n\n{passos}\n")
 
     def pacote(self) -> bytes:
@@ -146,7 +146,7 @@ class Tarefa(BaseModel):
 def criar_tarefa(procedimento: str, parametros: dict[str, float], *, raiz: Path = PASTA_TAREFAS,
                  atual: ir.MusicIR | None = None, plano: Plano | None = None) -> Tarefa:
     """Monta a entrada (só números, pelo formato do patch) antes de criar a pasta: entrada impossível = nada criado."""
-    if procedimento not in PATCHES:
+    if procedimento not in PATCHES or not PATCHES[procedimento].arquivo:
         raise ValueError(f"não há patch aprovado para {procedimento}")
     conteudo = PATCHES[procedimento].montar(parametros, atual, plano)
     tarefa_id = f"om-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
@@ -184,9 +184,7 @@ def importar(tarefa: Tarefa, saida: bytes | str, *, operacao: str, atual: ir.Mus
         detalhe = erro.read_text(encoding="utf-8", errors="replace")[:500] if erro.is_file() else "sem erro.txt"
         raise ValueError(f"o patch falhou no OpenMusic: {detalhe.strip()}")
     p = tarefa.patch
-    autor = {"esquisse": "OpenMusic/Esquisse", "chaos": "OpenMusic/Chaos", "situation": "OpenMusic/Situation",
-             "omchroma": "OpenMusic/OMChroma", "om-supervp": "OpenMusic/OM-SuperVP"}.get(p.biblioteca, "OpenMusic")
     ctx = Contexto(parametros=tarefa.parametros, entrada=tarefa.entrada(), pasta=pasta, atual=atual, plano=plano,
                    rng=rng or random.Random(0),
-                   proveniencia=ir.Proveniencia(origem="openmusic", autor=autor, operacao=operacao))
+                   proveniencia=ir.Proveniencia(origem="openmusic", autor=p.autor, operacao=operacao))
     return p.ler(valores, ctx)

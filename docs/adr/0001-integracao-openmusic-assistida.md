@@ -48,6 +48,10 @@ JSONs e tarefas existentes continuam legíveis e a saída pode ser produzida em 
   harmônica) e diz isso na justificativa.
 - A composição precisa pausar e retomar uma etapa pendente (Tarefa sobrevive a rerun e vai no JSON exportado).
 - Nenhum código das bibliotecas GPL entra no repositório. Só patches de autoria própria.
+- 2026-11-12: a mesma estratégia vale para Chaos, Situation e OMChroma (patches em `patches/`, validados no OM
+  real; ver docs/pesquisa/openmusic.md). Um patch só é oferecido depois de rodar no OM real (`validado`). O áudio
+  do OMChroma é renderizado pelo Muschat com o Csound detectado; a etapa do OM continua assistida. Problemas da
+  Situation sem solução não vão ao OM: a busca exaustiva travou o app no teste real.
 
 ## Para evoluir
 
