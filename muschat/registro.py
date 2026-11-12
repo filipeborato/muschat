@@ -87,7 +87,7 @@ _BIBLIOTECAS_OM = {
 
 def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad_versao: str | None = None,
              which: Callable[[str], str | None] = shutil.which,
-             patches: Mapping[str, PatchAprovado] = PATCHES) -> Registro:
+             patches: Mapping[str, PatchAprovado] = PATCHES, openmusic_ativo: bool = True) -> Registro:
     caps = [_python(),
             Capacidade("Abjad", "gravacao", "automatico" if abjad_versao else "indisponivel",
                        "MusicIR -> texto LilyPond" if abjad_versao else "pacote abjad não importável",
@@ -98,6 +98,8 @@ def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad
                        versao=".".join(map(str, lilypond.versao)) if lilypond else None, saidas="PDF, SVG"),
             Capacidade("Verovio", "gravacao", "automatico", "MusicXML -> SVG, sempre disponível (reserva)",
                        saidas="SVG")]
+    if not openmusic_ativo:
+        return Registro(tuple(caps))
     if openmusic is None:
         caps.append(Capacidade("OpenMusic", "motor", "indisponivel",
                                "não encontrado: instale o OpenMusic 8.0 ou defina OPENMUSIC com o caminho",

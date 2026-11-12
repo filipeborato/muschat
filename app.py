@@ -96,18 +96,22 @@ def _lilypond(configurado: str | None) -> Lilypond | None:
 
 
 @st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar algo aparece em até 5 min
-def _registro() -> Registro:
+def _registro(openmusic_ativo: bool = cfg.openmusic_ativo) -> Registro:
     try:
         abjad_versao: str | None = version("abjad")
     except PackageNotFoundError:
         abjad_versao = None
     return detectar_registro(lilypond=_lilypond(os.environ.get("LILYPOND")),
-                             openmusic=detectar_openmusic(os.environ.get("OPENMUSIC")), abjad_versao=abjad_versao)
+                             openmusic=(detectar_openmusic(os.environ.get("OPENMUSIC")) if openmusic_ativo else None),
+                             abjad_versao=abjad_versao, openmusic_ativo=openmusic_ativo)
 
 
 _ICONE = {"automatico": "🟢", "intercambio_arquivos": "🟡", "manual": "🟠", "indisponivel": "⚪"}
 
-st.sidebar.radio("Motor", list(MODOS), format_func=MODOS.__getitem__, key="modo", horizontal=True,
+modos = list(MODOS) if cfg.openmusic_ativo else ["automatico", "python"]
+if st.session_state.get("modo") not in modos:
+    st.session_state.modo = "automatico"
+st.sidebar.radio("Motor", modos, format_func=MODOS.__getitem__, key="modo", horizontal=True,
                  help="Automático escolhe por regras explícitas; os outros são respeitados ou recusados com o motivo.")
 with st.sidebar.expander("Motores e bibliotecas"):
     for cap in _registro().capacidades:

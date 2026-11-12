@@ -17,7 +17,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from muschat.openmusic import PATCHES
 from muschat.plano import Plano
 from muschat.registro import NOME_DO_MOTOR, PREFERENCIA, Motor, Registro
 
@@ -75,15 +74,18 @@ def _escolher(procedimento: str, modo: Modo, registro: Registro) -> tuple[Motor,
                              f"({_estado(disponiveis['openmusic'].estado)}).")
     if modo == "hibrido":
         return "python", f"{procedimento}: Python/Abjad, o OpenMusic não tem esse procedimento aqui (R4)."
+    automaticos = {m: c for m, c in disponiveis.items() if c.estado == "automatico"}
+    if not automaticos:
+        raise SemRota("Esta operacao exige modo assistido explicito; selecione OpenMusic ou Hibrido.")
     # R5 e R6: menos intervenção manual; empate fica com o Python
-    escolhido = min(disponiveis, key=lambda m: (PREFERENCIA[disponiveis[m].estado], m != "python"))
+    escolhido = min(automaticos, key=lambda m: (PREFERENCIA[disponiveis[m].estado], m != "python"))
     outros = [m for m in disponiveis if m != escolhido]
     if outros:
         o = outros[0]
         return escolhido, (f"{procedimento}: {NOME_DO_MOTOR[escolhido]} ({_estado(disponiveis[escolhido].estado)}). "
                            f"O {NOME_DO_MOTOR[o]} também faz, mas aqui é {_estado(disponiveis[o].estado)}; "
                            "o automático prefere menos intervenção manual (R5).")
-    motivo = "" if procedimento not in PATCHES or escolhido == "openmusic" else f" {_situacao_om(registro)}"
+    motivo = "" if registro.capacidade("OpenMusic") is None or escolhido == "openmusic" else f" {_situacao_om(registro)}"
     return escolhido, f"{procedimento}: {NOME_DO_MOTOR[escolhido]}, o único que executa aqui.{motivo}"
 
 
@@ -96,14 +98,18 @@ def _situacao_om(registro: Registro) -> str:
     om = registro.capacidade("OpenMusic")
     if om is None or om.estado == "indisponivel":
         return f"OpenMusic indisponível: {om.motivo if om else 'não detectado'}."
-    patch_libs = {p.biblioteca for p in PATCHES.values()}
-    libs = [c for c in registro.capacidades if c.tipo == "biblioteca" and c.nome.lower() in patch_libs]
+    libs = [c for c in registro.capacidades if c.tipo == "biblioteca"]
     return " ".join(f"{c.nome}: {c.motivo}." for c in libs if c.estado == "indisponivel") or "OpenMusic disponível."
 
 
 def _por_que_nao(procedimento: str, motor: Motor, registro: Registro) -> str:
     if motor == "openmusic":
-        if procedimento not in PATCHES:
+        om = registro.capacidade("OpenMusic")
+        if om is None:
+            return "Integração experimental desativada; habilite MUSCHAT_OPENMUSIC=1 para usar OpenMusic."
+        if om.estado == "indisponivel":
+            return _situacao_om(registro)
+        if not any(procedimento in c.procedimentos for c in registro.capacidades if c.tipo == "biblioteca"):
             return f"Não há patch aprovado de {procedimento} para o OpenMusic."
         return _situacao_om(registro)
     return f"{procedimento} não está no catálogo Python."

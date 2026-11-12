@@ -16,6 +16,7 @@ class Config:
     api_key: str
     model: str
     embed_model: str
+    openmusic_ativo: bool = False
 
 
 def _ler(nome: str, env: Mapping, secrets: Mapping) -> str:
@@ -28,6 +29,7 @@ def carregar_config(env: Mapping, secrets: Mapping) -> Config:
         raise ChaveAusente("GEMINI_API_KEY não configurada.")
     return Config(
         api_key=api_key,
+        openmusic_ativo=_ler("MUSCHAT_OPENMUSIC", env, secrets) == "1",
         model=_ler("GEMINI_MODEL", env, secrets) or MODELO_PADRAO,
         embed_model=_ler("GEMINI_EMBED_MODEL", env, secrets) or MODELO_EMBEDDINGS_PADRAO,
     )

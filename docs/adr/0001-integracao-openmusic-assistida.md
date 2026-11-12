@@ -24,6 +24,10 @@ Evidência (detalhe e fontes em `docs/pesquisa/openmusic.md`):
 
 ## Decisão
 
+Integração experimental opcional: `MUSCHAT_OPENMUSIC=1` habilita descoberta e modos na interface.
+Por padrão, OM e bibliotecas não são procurados. O núcleo Python funciona sem aplicativos externos do OM.
+JSONs e tarefas existentes continuam legíveis e a saída pode ser produzida em outra máquina.
+
 **Estratégia C (assistida), com intercâmbio de arquivos.** A execução é **assistida, não automática.**
 
 - O Muschat gera uma **Tarefa OpenMusic** num diretório isolado e ignorado pelo git. A tarefa contém um arquivo de

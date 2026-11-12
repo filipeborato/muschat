@@ -2,6 +2,11 @@
 
 Status: **aceito**.
 
+Atualização 2026-11-11: a interface habilita OM somente com `MUSCHAT_OPENMUSIC=1`. Instalação existente ou
+pedido do modelo não habilitam a integração. O roteador consulta apenas o Registro, sem importar PATCHES.
+Seleção automática exige motor com estado `automatico`; uma rota exclusivamente assistida é recusada com
+orientação para escolha explícita. Pedidos que nomeiam OM continuam escolhas explícitas, sujeitos à ativação.
+
 ## Contexto
 
 O compositor escolhe um modo (Automático, Python/Abjad, OpenMusic, Híbrido) e o plano lista operações do catálogo.

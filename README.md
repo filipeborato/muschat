@@ -53,7 +53,9 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
 
 ## Quick start
 
-Requirements: [uv](https://docs.astral.sh/uv/) and a Gemini API key ([get one here](https://aistudio.google.com/apikey)).
+Requirements: Python 3.13+, [uv](https://docs.astral.sh/uv/) and a Gemini API key ([get one here](https://aistudio.google.com/apikey)).
+The standard Python composition workflow does **not** require OpenMusic, its libraries, LispWorks, Csound,
+SuperVP or an OpenMusic workspace. `uv sync` does not install these external applications.
 
 ```bash
 git clone <repo-url> muschat
@@ -69,12 +71,23 @@ newer (2.26 works) and put it on `PATH`, or set `LILYPOND=<path to lilypond.exe>
 scores are rendered by Verovio from MusicXML and the app says what is lost. On Windows the app also finds an
 unzipped release in `%LOCALAPPDATA%\Programs\lilypond-*`.
 
-Optional, for the OpenMusic engine: install [OpenMusic 8.0](https://github.com/openmusic-project/openmusic/releases)
+### Experimental OpenMusic integration (optional)
+
+This is a research integration with manual desktop steps, outside the standard installation workflow.
+Set `MUSCHAT_OPENMUSIC=1` in `.env` or Streamlit secrets to enable discovery and the OpenMusic/Hybrid modes.
+By default, the app does not scan OpenMusic or its libraries and only offers Automatic/Python modes.
+Python composition works without it. No GUI automation is provided by Muschat.
+
+To reproduce the optional OpenMusic experiments, install [OpenMusic 8.0](https://github.com/openmusic-project/openmusic/releases)
 and the libraries you use in `~/OM/Libraries/` (the spectral procedure needs
 [Esquisse](https://github.com/openmusic-project/Esquisse/releases)). The app finds `C:\Program Files\OpenMusic*`
 or the path in `OPENMUSIC`. OpenMusic runs **assisted** (see `docs/adr/0001-integracao-openmusic-assistida.md`):
 Muschat prepares a task folder under `.muschat/openmusic/` with the input numbers and step-by-step instructions, you
 run the approved patch in OpenMusic and upload `saida.txt`, and the composition resumes from there.
+
+The [official OM 8.0 release](https://github.com/openmusic-project/openmusic/releases/tag/v8.0) advertises Linux
+RPM/DEB/tarball packages as well as Windows and macOS builds. **Muschat's OpenMusic integration has only been
+validated on Windows**; Linux/macOS adapter behavior and headless execution have not been validated.
 
 Without an index the chat still works and says it is answering from general knowledge.
 
