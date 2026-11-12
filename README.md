@@ -21,6 +21,11 @@ Built with [Streamlit](https://streamlit.io) and Google Gemini (`google-genai`).
 | Authorship from the corpus metadata: works and examples are never credited to another composer | ✅ |
 | Sheet music: real excerpts from the corpus, or an illustrative example generated on demand (JSON → MusicXML → Verovio SVG, offline) with `.musicxml` download | ✅ |
 | Prompt-injection defence: user text, analysis and corpus passages are delimited and treated as data | ✅ |
+| Session composition: typed plan → Python procedures on MusicIR → versions with undo, compare and re-apply | ✅ |
+| Engraving with Abjad + LilyPond (score and parts as PDF), Verovio fallback | ✅ (LilyPond optional) |
+| Exports: MusicXML, MIDI, LilyPond/PDF/SVG, composition JSON (re-importable), experiment JSON, one `.zip` | ✅ |
+| Descriptive metrics and technical inspection panel per version | ✅ |
+| OpenMusic integration (assisted, file exchange, opt-in) | 🧪 experimental, Windows only |
 
 The UI is in Portuguese.
 
@@ -48,7 +53,9 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
    back as explicit operational hypotheses with numbers, which the sidebar lets you adjust and re-apply without
    calling the model. The result becomes a new version of the session composition, engraved with Abjad +
    LilyPond (score and parts as PDF, `.ly` download) when LilyPond is installed.
-4. **Answer**: the chat receives only the question; the analysis, passages and score list go into that
+4. **Export**: every version can be downloaded as MusicXML, MIDI, or a `.zip` with what was really produced
+   for it (see [Exports](#exports)); the composition JSON loads back into a new session.
+5. **Answer**: the chat receives only the question; the analysis, passages and score list go into that
    turn's system instruction, so the conversation history stays small (questions and answers only).
 
 ## Quick start
@@ -56,6 +63,12 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
 Requirements: Python 3.13+, [uv](https://docs.astral.sh/uv/) and a Gemini API key ([get one here](https://aistudio.google.com/apikey)).
 The standard Python composition workflow does **not** require OpenMusic, its libraries, LispWorks, Csound,
 SuperVP or an OpenMusic workspace. `uv sync` does not install these external applications.
+
+| What | Installed by | Needed for |
+|---|---|---|
+| Streamlit, google-genai, Abjad, Verovio, numpy, pypdf, rank-bm25, pydantic | `uv sync` | everything: chat, composition, MusicXML/MIDI/JSON export, Verovio scores |
+| [LilyPond](https://lilypond.org) ≥ 2.25.26 | you, optional | engraved PDF/SVG of score and parts |
+| [OpenMusic 8.0](https://github.com/openmusic-project/openmusic/releases) + Esquisse | you, optional | only the experimental OpenMusic/Hybrid modes (appendix) |
 
 ```bash
 git clone <repo-url> muschat
@@ -72,6 +85,8 @@ scores are rendered by Verovio from MusicXML and the app says what is lost. On W
 unzipped release in `%LOCALAPPDATA%\Programs\lilypond-*`.
 
 ### Experimental OpenMusic integration (optional)
+
+Step-by-step setup is in [Appendix: OpenMusic experiments B and C](#appendix-openmusic-experiments-b-and-c).
 
 This is a research integration with manual desktop steps, outside the standard installation workflow.
 Set `MUSCHAT_OPENMUSIC=1` in `.env` or Streamlit secrets to enable discovery and the OpenMusic/Hybrid modes.
@@ -141,15 +156,15 @@ Paste these into the chat to exercise the current features:
 8. **No misattribution**: `Me dê um exemplo de partitura da Nina Šenk.` explains there is no published score
    to show and credits nothing from the corpus to her.
 9. **Composition**: `Crie oito compassos para quarteto de cordas utilizando uma sequência derivada de parciais
-   harmônicos.` shows a four-part score (version 1 in the sidebar's **Composição** section, with its MusicXML
-   download). Then `Aplique um processo às durações do violoncelo, preservando os outros instrumentos.` creates
+   harmônicos.` shows a four-part score (version 1 in the sidebar's **Composição** section, with its **Exportar**
+   menu). Then `Aplique um processo às durações do violoncelo, preservando os outros instrumentos.` creates
    version 2; comparing 1 → 2 in the sidebar lists changes only in the cello part. **Desfazer** goes back to 1.
 10. **Engraving and procedures**: `Crie oito compassos para quarteto de cordas utilizando quiálteras, harmônicos e
     transformação progressiva de densidade.` (with LilyPond installed) shows the engraved score with download
     buttons for the `.ly`, the score PDF and one PDF per instrument. Then `Deixe os compassos finais mais
     fragmentados.` shows the operational hypothesis in the answer and in the sidebar, and changes only the final
     bars; **Ajustar parâmetros e reaplicar** changes a number and re-runs it.
-11. **Engines**: in the sidebar pick **Motor**. *Automático* explains its choice in the answer (with OpenMusic only
+11. **Engines** (OpenMusic/Híbrido only with `MUSCHAT_OPENMUSIC=1`): in the sidebar pick **Motor**. *Automático* explains its choice in the answer (with OpenMusic only
     assisted, it picks Python for the harmonic series and says why). *OpenMusic* with `Produza uma sequência
     intervalar derivada de um espectro harmônico e utilize-a para criar material musical.` stops at **Aguardando
     você** with a task to download; *Híbrido* with `Use um procedimento espectral do OpenMusic para produzir
@@ -157,6 +172,133 @@ Paste these into the chat to exercise the current features:
     OpenMusic step, then, after you upload `saida.txt`, the Python orchestration and the engraving. **Motores e
     bibliotecas** lists each engine and library with its real state and what is missing.
 12. **Error handling**: set `GEMINI_API_KEY=invalid` in `.env` and restart. You get a friendly message, not a traceback. Remove the key entirely and you get setup instructions.
+
+## Exports
+
+In the sidebar, **Composição → Exportar** offers, for the current version:
+
+| Download | Contents | What it loses (shown next to the button) |
+|---|---|---|
+| **composição completa (.zip)** | MusicXML, MIDI, `composicao.json`, `experimento.json`, `PERDAS.txt`; plus `.ly` and PDFs of score and parts and the score SVG when LilyPond engraved it, or the Verovio SVG otherwise | only formats actually produced are included |
+| MusicXML | all parts, voices, tuplets, quarter tones, techniques | control curves, spectral data, electronic events; edits made in Dorico/MuseScore do not come back |
+| MIDI | one track per part, tempo and meter | techniques, articulations, spelling, tuplets as notation, microtones (rounded to the semitone) |
+
+**Arquivo da composição (.json)** saves and opens the whole composition (all versions, the pending OpenMusic step if
+any, provenance per event); it is the lossless format. Opening it in a new session (**Nova conversa**, then
+**abrir composição**) lets you keep editing. **dados do experimento** downloads the research JSON: for each version
+the request, model, plan (with constraints), router decision and justification, procedures, parameters, seed,
+dependency versions (Python, Abjad, Verovio, google-genai), constraint violations, diff against the previous version
+and descriptive metrics. Versions of external engines (LilyPond, OpenMusic) appear only when detected.
+
+**Métricas descritivas** (in **Inspeção técnica**, next to the plan, router decision, steps, parameters and
+intermediate results): number of events and notes, attacks per quarter note, range in midicents, duration
+distribution, standard deviation of melodic intervals in cents, constraint violations and diff size. They describe
+the material; they are not an aesthetic or creativity score.
+
+## Experiments A–E
+
+Run each script in a clean session of the app (click **Nova conversa** first) with the default configuration:
+`MUSCHAT_OPENMUSIC` unset and **Motor = Automático** unless stated. A, D and E need no OpenMusic. A needs LilyPond for
+the PDFs; without it the score appears through Verovio and the zip has no PDF. After each experiment, the experiment
+JSON is under **Composição → Arquivo da composição → dados do experimento**, and the full package under **Exportar**.
+
+The results below come from real runs on 2026-11-12 with `gemini-3.1-flash-lite`, LilyPond 2.26.0 and Windows 11.
+The model chooses the plan and the seed, so a rerun gives a different but comparable result. Re-applying a version
+with **Ajustar parâmetros e reaplicar** reuses its seed and is deterministic.
+
+### A: Abjad/LilyPond engraving
+
+1. Ask: `Crie oito compassos para quarteto de cordas utilizando quiálteras, harmônicos e transformação progressiva de densidade.`
+2. Expect: version 1 with four parts (Violino, Violino, Viola, Violoncelo), 8 bars, the engraved score, and PDF
+   buttons for the score and each part.
+
+Result: plan `serie_harmonica → subdividir → densidade → aplicar_tecnicas`, all on Python/Abjad. The version has 4
+parts, 8 bars, 226 notes, 37 tuplet groups and 116 harmonics. The density ramp (1 → 3 attacks per quarter note) and
+the tuplet and harmonic proportions came back as stated hypotheses. No constraint was violated. LilyPond produced 5
+PDFs (a 2-page score and four 1-page parts) and the score SVG.
+
+### D: Router
+
+Run each request in a new conversation, with the engine selector as shown, and open **Inspeção técnica** to read the
+decision:
+
+| Selector | Request | Real decision |
+|---|---|---|
+| Automático | `Crie quatro compassos para quarteto de cordas a partir de uma série harmônica sobre Dó 2.` | `serie_harmonica` on Python/Abjad, "o único que executa aqui" (OpenMusic disabled) |
+| Python/Abjad | `Crie quatro compassos para trio de violino, viola e violoncelo com densidade crescente.` | `serie_harmonica` and `densidade` on Python/Abjad, "como escolhido (automático)": the parenthesis is the engine's execution state. Hypothesis: density 0.5 → 3 attacks per quarter note |
+| Automático | `Produza uma sequência intervalar derivada de um espectro harmônico e utilize-a para criar material musical para quarteto de cordas.` | `serie_harmonica` on Python/Abjad, same rule |
+| Automático | `Use um procedimento espectral do OpenMusic para produzir material de alturas para quarteto.` | not classified as a composition request: the model explained the OpenMusic spectral workflow in text and no version was created |
+
+The rules (R1–R6) are in `docs/adr/0002-regras-do-roteador.md`. With OpenMusic enabled, the OpenMusic and Híbrido
+selectors exercise the assisted rules (see the appendix).
+
+### E: Incremental edit
+
+1. Ask: `Crie oito compassos para quarteto de cordas utilizando uma sequência derivada de parciais harmônicos.`
+2. Then: `Aplique um processo às durações do violoncelo, preservando os outros instrumentos.`
+3. In **Composição**, compare 1 → 2.
+
+Result: version 2 ran `permutar_duracoes` with selection `{'partes': ['P4']}`. The programmatic diff lists 10
+changed events, all in the cello (P4), and nothing in the other three parts. The composition JSON was then saved,
+opened in a new session and edited again (`Agora transponha a viola uma terça menor acima, sem mudar os outros
+instrumentos.`). Version 3 transposed only the viola (22 events in P3).
+
+### Platforms
+
+The Python path (tests, composition, export and the app without OpenMusic) was smoke-tested on Linux (Ubuntu 24.04
+on WSL2, no display, no LilyPond, no OpenMusic). 340 tests passed and 2 were skipped (real LilyPond and real
+OpenMusic). The app showed only the Automatic/Python modes and no OpenMusic entry, and the export zip fell back to
+the Verovio SVG. This says nothing about the OpenMusic adapter on Linux, which has only been validated on Windows.
+
+## Appendix: OpenMusic experiments B and C
+
+Optional and experimental. Skipping B and C because OpenMusic is missing does not affect A, D, E or the rest of the
+app. Muschat does not install OpenMusic, create its workspace or drive its GUI.
+
+Setup (validated on Windows 11 only):
+
+1. Install [OpenMusic 8.0](https://github.com/openmusic-project/openmusic/releases/tag/v8.0) and put
+   [Esquisse](https://github.com/openmusic-project/Esquisse/releases) in `~/OM/Libraries/` (validated with Esquisse 1.2).
+2. Set `MUSCHAT_OPENMUSIC=1` in `.env`, plus `OPENMUSIC=<path to the executable>` if it is not under
+   `C:\Program Files\OpenMusic*`. Restart the app. **Motores e bibliotecas** should list OpenMusic 8.0 and Esquisse
+   as assisted.
+3. Open OpenMusic once and create or open a workspace yourself.
+
+Integration states: *automático* (runs without you), *intercâmbio de arquivos*, *manual* (assisted: you run the
+approved patch) and *indisponível* (with the missing requirement). OpenMusic is **assisted**: every OpenMusic step
+needs your hand.
+
+**B: OpenMusic.** Selector **OpenMusic**. Ask `Produza uma sequência intervalar derivada de um espectro harmônico e
+utilize-a para criar material musical.` The flow stops at **Aguardando você** with a task folder under
+`.muschat/openmusic/<task id>/` (`entrada.txt`, `instrucoes.md` and a copy of the approved `serie_harmonica.lisp`)
+and a `.zip` of it. In OpenMusic's Listener, use `Lisp → Load File…` on the task's `serie_harmonica.lisp`; it writes
+`saida.txt` next to `entrada.txt`. Upload `saida.txt` and click **Importar e continuar**.
+
+**C: Hybrid.** Selector **Híbrido**. Ask `Use um procedimento espectral do OpenMusic para produzir material de alturas
+e organize esse material para quarteto de cordas utilizando Python e Abjad.` The OpenMusic step is the same; after
+the upload, the Python orchestration and the engraving run.
+
+Real result (2026-11-11, OpenMusic 8.0 + Esquisse 1.2). These runs used a fixed plan and seed 7, so the Gemini
+planning call and the Streamlit upload were not part of them. Input `3600 1 1 1 16`; OpenMusic output
+`3600 4800 5502 6000 6386 6702 6969 7200 7404 7586 7751 7902 8041 8169 8288 8400`, equal to
+`round(3600 + 1200·log2(n))` for n = 1..16. B produced a version with OpenMusic provenance (score and one part PDF).
+C chained OpenMusic → Python orchestration for two violins, viola and cello → Abjad/LilyPond (score and four part
+PDFs). Details and evidence: `docs/pesquisa/openmusic.md` and `docs/adr/0001-integracao-openmusic-assistida.md`.
+
+**Deferred, not promised:** Chaos, Situation/Clouds, OMChroma (+ Csound) and OM-SuperVP appear in the registry with
+their real state (normally unavailable). They have no approved patches and are not planned for this delivery.
+
+## Limitations
+
+- The model plans; it can only use the procedures in the Python catalog. A request the analysis does not classify as
+  a composition operation gets a text answer instead (experiment D, last row).
+- MIDI rounds microtones to the semitone and drops techniques. MusicXML drops curves, spectral data and electronic
+  events. Only the JSON is lossless.
+- OpenMusic runs assisted only (no headless or GUI automation), has only been validated on Windows, and only the
+  harmonic series patch is approved.
+- The Streamlit UI is checked manually (plus `streamlit.testing` smoke runs), not by the automated suite.
+- On the free Gemini tier, requests per minute are limited, and a composition turn costs three calls (analysis, plan
+  and answer).
 
 ## Troubleshooting
 
@@ -174,8 +316,9 @@ Paste these into the chat to exercise the current features:
 uv run pytest
 ```
 
-The tests cover the reasoning chain, corpus readers, index, hybrid search, the MusicXML builder and the
-Verovio render, all with fakes instead of the API. The UI is checked manually with the steps above.
+The tests cover the reasoning chain, corpus readers, index, hybrid search, MusicIR, procedures, constraints, router,
+orchestrator, versions, the OpenMusic task bridge, the LilyPond/MusicXML/MIDI writers, JSON round trip, export zip
+and metrics, all with fakes instead of the API. Tests that need a real LilyPond or OpenMusic are skipped when absent. The UI is checked manually with the steps above.
 
 ## Project layout
 
@@ -204,7 +347,8 @@ muschat/orquestrador.py   composition turn: plan -> router -> list of steps (pau
 muschat/registro.py       capability registry: what each engine/library/engraver can do on this machine, and how
 muschat/roteador.py       explicit, ordered routing rules (docs/adr/0002-regras-do-roteador.md)
 muschat/openmusic.py      OpenMusic bridge (assisted): install detection, approved patches, task, output import
-muschat/composicao.py     session composition: versions, undo, go back, compare
+muschat/composicao.py     session composition: versions, undo, go back, compare, JSON save/open
+muschat/exportacao.py     MIDI writer, experiment JSON, export zip, descriptive metrics, loss notes per format
 muschat/notacao/          example schema -> MusicIR, extended-technique table by instrument family, MusicXML
                           builder, Verovio renderer
 tests/                    pytest suite
@@ -214,4 +358,7 @@ tests/                    pytest suite
 
 Muschat depends on [Abjad](https://github.com/Abjad/abjad), which is GPL-3.0, so a distributed copy of Muschat is a
 combined work under GPL-3.0. LilyPond (GPL-3.0) is an external program the user installs; it is called as a process
-and never shipped with the project.
+and never shipped with the project. OpenMusic and its libraries (GPL-3.0 or their own licenses; SuperVP has a
+separate IRCAM license) are optional external applications and are not shipped either; `patches/serie_harmonica.lisp`
+is written by this project and only calls Esquisse's public `harm-series`. The license report is in
+`docs/pesquisa/openmusic.md`.
