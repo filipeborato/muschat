@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from muschat import prompts
 from muschat.composicao import Composicao, Pendencia, Versao
+from muschat.exportacao import dependencias
 from muschat.instrumentos import FAMILIAS, INSTRUMENTOS
 from muschat.musicir import MusicIR, Origem, Proveniencia, comparar, localizar
 from muschat.notacao.musicxml import para_musicxml
@@ -191,7 +192,7 @@ def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dic
         "pedido": ctx.pedido, "modelo": ctx.modelo, "modo": ctx.decisao.modo, "plano": plano.model_dump(mode="json"),
         "decisao": ctx.decisao.model_dump(mode="json"), "operacao": ctx.operacao,
         "procedimentos": [op.procedimento for op in plano.operacoes], "parametros": ctx.parametros,
-        "semente": ctx.semente, "violacoes": violacoes,
+        "semente": ctx.semente, "violacoes": violacoes, "dependencias": dependencias(),
         "etapas": [{**e.model_dump(), "estado": "feita"} for e in ctx.decisao.etapas],
         "intermediarios": [ir.model_dump(mode="json") for ir in ctx.intermediarios],
     }, anterior=ctx.base)

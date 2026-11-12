@@ -175,6 +175,16 @@ def test_tarefa_pendente_sobrevive_a_serializar_e_restaurar(tmp_path):
     assert retomar(restaurada, SAIDA_16).versao is not None
 
 
+def test_json_exportado_e_importado_reproduz_a_composicao_identica(tmp_path):
+    from tests.test_composicao import _quarteto
+    c, _, _ = _om(tmp_path, composicao=_quarteto(), plano=_plano(parametros={"parciais": 16}, selecao={"partes": ["P4"]}))
+    texto = c.para_json()
+    restaurada = Composicao.de_json(texto)
+    assert len(restaurada.versoes) == 1 and restaurada.pendente is not None
+    assert restaurada.versoes[0].ir == c.versoes[0].ir and restaurada.pendente == c.pendente
+    assert restaurada.para_json() == texto
+
+
 def test_com_etapa_aguardando_novo_pedido_nao_chama_o_modelo(tmp_path):
     c, _, _ = _om(tmp_path)
     _, r2, g = _rodar(_plano(), composicao=c)

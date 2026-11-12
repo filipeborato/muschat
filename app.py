@@ -18,6 +18,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 from muschat.composicao import Composicao
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
+from muschat.exportacao import PERDAS, experimento_json, metricas, pacote, para_midi
 from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
@@ -158,6 +159,9 @@ def _inspecao(c: Composicao):
     with st.expander("Inspeção técnica"):
         for linha in exp.get("decisao", {}).get("justificativa", []):
             st.markdown(f"- {linha}")
+        anterior = c.versoes[c.atual.anterior].ir if c.atual.anterior is not None else None
+        st.markdown("**Métricas descritivas** (descrição do material, não avaliação estética)")
+        st.json(metricas(c.atual.ir, anterior=anterior, violacoes=exp.get("violacoes", [])), expanded=False)
         st.json({k: v for k, v in exp.items() if k != "intermediarios"}, expanded=False)
         for k, dump in enumerate(exp.get("intermediarios", []), 1):
             st.download_button(f"intermediário da etapa {k} (.musicxml)",
@@ -169,9 +173,13 @@ def _inspecao(c: Composicao):
 def _arquivo_json(c: Composicao):
     """Salvar e abrir a composição (Versões + etapa pendente) em JSON."""
     with st.popover("Arquivo da composição (.json)", width="stretch"):
-        st.download_button("salvar composição", data=c.para_json(), file_name="composicao.json",
+        st.download_button("salvar composição", data=c.para_json, file_name="composicao.json",
                            mime="application/json", on_click="ignore", width="stretch",
                            disabled=not c.versoes and c.pendente is None)
+        st.download_button("dados do experimento", data=lambda m=_motores(): experimento_json(c, motores=m),
+                           file_name="experimento.json", mime="application/json", on_click="ignore",
+                           width="stretch", disabled=not c.versoes)
+        st.caption(PERDAS["json"])
         arquivo = st.file_uploader("abrir composição", type=["json"], key="abrir-composicao")
         if arquivo is not None and st.button("Abrir (substitui a atual)", width="stretch"):
             try:
@@ -194,9 +202,7 @@ def _secao_composicao(c: Composicao):
         _inspecao(c)
         st.button("Desfazer", on_click=c.desfazer, disabled=c.atual.anterior is None, width="stretch")
         _ajustar(c)
-        st.download_button("baixar versão atual (.musicxml)", data=para_musicxml(c.atual.ir),
-                           file_name=f"composicao_v{c.indice + 1}.musicxml",
-                           mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
+        _exportar(c)
         nomes = [f"{i + 1} · {v.experimento['operacao']} · {v.data:%H:%M} · {v.resumo.partition(': ')[2][:50]}"
                  for i, v in enumerate(c.versoes)]
         escolhida = st.selectbox("Versões", range(len(nomes)), index=c.indice, format_func=nomes.__getitem__)
@@ -212,6 +218,37 @@ def _secao_composicao(c: Composicao):
             por_local = Counter(dif.locais.values())  # (parte, compasso) -> eventos mudados
             for parte in sorted({p for p, _ in por_local}):
                 st.caption(f"{parte}: " + ", ".join(f"c.{n} ({k})" for (p, n), k in sorted(por_local.items()) if p == parte))
+
+
+def _motores() -> dict[str, str]:
+    """Versões dos motores externos detectados (só os presentes) para o JSON do experimento."""
+    return {cap.nome: cap.versao for cap in _registro().capacidades
+            if cap.versao and cap.estado != "indisponivel" and cap.nome != "Abjad"}
+
+
+def _exportar(c: Composicao):
+    """Downloads da Versão atual, cada um com o que o formato perde."""
+    assert c.atual is not None and c.indice is not None
+    ir, i, nome = c.atual.ir, c.indice, f"composicao_v{c.indice + 1}"
+    lilypond = exemplo_da_versao(c.atual).lilypond
+    gravacao = _gravar(tuple(lilypond.items())) if lilypond else None  # em cache: a mesma do chat
+    svg = None if gravacao and gravacao.pdfs else _svg(para_musicxml(ir))
+    motores = _motores()  # no script: o callable do download roda em outra thread, sem acesso ao cache do app
+    with st.popover("Exportar", width="stretch"):
+        st.download_button("composição completa (.zip)", file_name=f"{nome}.zip", mime="application/zip",
+                           data=lambda: pacote(c, i, lilypond=lilypond, gravacao=gravacao, svg=svg,
+                                               motores=motores),
+                           on_click="ignore", width="stretch", type="primary")
+        st.caption("PDF/.ly só se o LilyPond gravou; SVG do LilyPond ou, sem ele, do Verovio; MusicXML, MIDI, "
+                   "JSONs e PERDAS.txt sempre.")
+        st.download_button("MusicXML", data=lambda: para_musicxml(ir), file_name=f"{nome}.musicxml",
+                           mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
+        st.caption(PERDAS["musicxml"])
+        st.download_button("MIDI", data=lambda: para_midi(ir), file_name=f"{nome}.mid", mime="audio/midi",
+                           on_click="ignore", width="stretch")
+        st.caption(PERDAS["midi"])
+        if lilypond:
+            st.caption(PERDAS["lilypond"])
 
 
 def _ajustar(c: Composicao):
