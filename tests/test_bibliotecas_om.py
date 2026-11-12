@@ -79,8 +79,8 @@ def test_situation_entrada_tem_um_dominio_por_vaga_e_a_solucao_vira_quarteto(tmp
 
 
 def test_situation_solucao_que_viola_restricao_e_rejeitada_com_o_local(tmp_path):
-    c, r, _ = _situation(tmp_path, base=4800)
-    ruim = [4800 + 100 * k for k in range(12)]  # vaga 0 (violino, c.1) com 4800: abaixo do Sol 3
+    c, r, _ = _situation(tmp_path, base=5000)  # 5000–6100: tem solução (violinos alcançam 7 para 6 vagas)
+    ruim = [5000 + 100 * k for k in range(12)]  # vaga 0 (violino, c.1) com 5000: abaixo do Sol 3
     r2 = retomar(c, " ".join(map(str, ruim)))
     assert r2.versao is None and "tessitura" in r2.resumo and "P1 c.1" in r2.resumo and c.pendente is not None
     repetida = [5500 + 100 * k for k in range(12)]
@@ -90,12 +90,17 @@ def test_situation_solucao_que_viola_restricao_e_rejeitada_com_o_local(tmp_path)
     assert r3.versao is None and "c.1" in r3.resumo and ("uníssono" in r3.resumo or "repetida" in r3.resumo)
 
 
-def test_situation_sem_solucao_lista_as_condicoes(tmp_path):
+def test_situation_sem_solucao_lista_as_condicoes_e_nao_vai_ao_openmusic(tmp_path):
     c, r, _ = _situation(tmp_path, base=4800)  # 4800–5900: violinos alcançam só 5500–5900 (5) para 6 vagas
+    assert r.tarefa is None and c.pendente is None and not any(tmp_path.iterdir())  # nada enviado ao OM
+    assert "sem solução" in r.resumo and "sem uníssono" in r.resumo and "Violino: 3 vagas" in r.resumo
+    assert "Violino + Violino alcançam 5 alturas para 6 vagas" in r.resumo
+
+
+def test_situation_que_devolve_menos_um_lista_as_condicoes(tmp_path):
+    c, r, _ = _situation(tmp_path)
     r2 = retomar(c, "-1")
-    assert r2.versao is None and "não achou solução" in r2.resumo
-    assert "sem uníssono" in r2.resumo and "Violino: 3 vagas" in r2.resumo
-    assert "Violino + Violino alcançam 5 alturas para 6 vagas" in r2.resumo
+    assert r2.versao is None and "não achou solução" in r2.resumo and "Violoncelo: 3 vagas" in r2.resumo
 
 
 def test_patch_que_falhou_no_openmusic_mostra_o_erro_txt(tmp_path):

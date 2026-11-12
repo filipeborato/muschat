@@ -288,8 +288,25 @@ planning call and the Streamlit upload were not part of them. Input `3600 1 1 1 
 C chained OpenMusic → Python orchestration for two violins, viola and cello → Abjad/LilyPond (score and four part
 PDFs). Details and evidence: `docs/pesquisa/openmusic.md` and `docs/adr/0001-integracao-openmusic-assistida.md`.
 
-**Deferred, not promised:** Chaos, Situation/Clouds, OMChroma (+ Csound) and OM-SuperVP appear in the registry with
-their real state (normally unavailable). They have no approved patches and are not planned for this delivery.
+**More libraries (assisted, validated on Windows on 2026-11-12).** Install the official releases from the
+[OpenMusic libraries page](https://openmusic-project.github.io/libraries) in `~/OM/Libraries/`; with OpenMusic enabled,
+**Motores e bibliotecas** lists each one with its real state. Each runs like B: Selector **OpenMusic**, a task folder,
+`Lisp → Load File…` on the task's `.lisp`, upload `saida.txt`. If a patch fails inside OpenMusic it writes `-2` and the
+Lisp error to `erro.txt`, and the upload shows that error.
+
+| Library | Procedure | Example request | Real result (fixed plan, seed 7, no Gemini call) |
+|---|---|---|---|
+| Chaos 1.5 | `densidade_caotica` (Verhulst logistic map → attacks per bar) | `Gere um processo composicional baseado em dinâmica caótica para controlar a densidade dos ataques de um quarteto.` (on an existing piece) | series `0.1 0.352 0.9907 1.0166`, equal to the documented formula; 2, 5, 12, 12 attacks per bar |
+| Situation 3.1 | `distribuir_restricoes` (`csolver`, one domain per slot, all different) | `Distribua doze alturas em quatro instrumentos, evitando uníssonos e mantendo cada parte dentro de seu registro.` | 12 different pitches, each in range, accepted by the checker |
+| OMChroma 5.2 + Csound | `sintese_aditiva` (notes → `add-1` partials, count rising over time) | `Utilize os eventos da partitura para controlar uma síntese aditiva cuja densidade espectral aumenta progressivamente.` | 159 partials, `.orc`/`.sco` from OMChroma, 8 s `muschat.wav` rendered by Csound 7.0, electronic part added (cues and a curve, no notes) |
+
+An impossible Situation problem (more slots than reachable pitches) is refused by Muschat with the conditions that
+fail, and never sent to OpenMusic: in the real test, the solver's exhaustive search for a non-existent solution froze
+OpenMusic. Csound (`CSOUND` or `PATH`) renders the audio; without it the `.orc`/`.sco` are kept and the part says why
+there is no audio. Clouds is installed but has no patch (its constraints are visual boxes). OM-SuperVP needs the
+SuperVP executable (IRCAM Forum subscription): Muschat detects it separately and can import its spectral data and
+turn it into notes (`eventos_do_espectro`), tested with fakes only; no SuperVP patch is validated. Details:
+`docs/pesquisa/openmusic.md`.
 
 ## Limitations
 
@@ -297,8 +314,10 @@ their real state (normally unavailable). They have no approved patches and are n
   a composition operation gets a text answer instead (experiment D, last row).
 - MIDI rounds microtones to the semitone and drops techniques. MusicXML drops curves, spectral data and electronic
   events. Only the JSON is lossless.
-- OpenMusic runs assisted only (no headless or GUI automation), has only been validated on Windows, and only the
-  harmonic series patch is approved.
+- OpenMusic runs assisted only (no headless or GUI automation) and has only been validated on Windows. Approved
+  patches: harmonic series (Esquisse), Verhulst density (Chaos), constrained distribution (Situation), additive
+  synthesis (OMChroma). The Situation solver has no time limit inside OpenMusic, so Muschat only sends problems that
+  have a solution.
 - The Streamlit UI is checked manually (plus `streamlit.testing` smoke runs), not by the automated suite.
 - On the free Gemini tier, requests per minute are limited, and a composition turn costs three calls (analysis, plan
   and answer).
@@ -349,7 +368,9 @@ muschat/orquestrador.py   composition turn: plan -> router -> list of steps (pau
                           after import) -> preservation check per step -> version
 muschat/registro.py       capability registry: what each engine/library/engraver can do on this machine, and how
 muschat/roteador.py       explicit, ordered routing rules (docs/adr/0002-regras-do-roteador.md)
-muschat/openmusic.py      OpenMusic bridge (assisted): install detection, approved patches, task, output import
+muschat/openmusic.py      OpenMusic bridge (assisted): install detection, task, output import
+muschat/patches_om.py     approved patches: entrada.txt per patch, saida.txt -> MusicIR, Csound rendering
+patches/                  the project's Lisp patches loaded in OpenMusic (Esquisse, Chaos, Situation, OMChroma)
 muschat/composicao.py     session composition: versions, undo, go back, compare, JSON save/open
 muschat/exportacao.py     MIDI writer, experiment JSON, export zip, descriptive metrics, loss notes per format
 muschat/notacao/          example schema -> MusicIR, extended-technique table by instrument family, MusicXML

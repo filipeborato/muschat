@@ -44,6 +44,34 @@ ADR 0001 aceito. Estratégia comprovada: **assistida por arquivos**. A pasta `in
 documentação instalada, mas sem teste de execução; permanece uma possibilidade de evolução, não um modo
 automático disponível. MusicXML exportado diretamente do OM também não foi testado.
 
+### Bibliotecas Chaos, Situation e OMChroma: execução real em 2026-11-12
+
+Instaladas em `~/OM/Libraries`: Chaos 1.5, Situation 3.1, Clouds 1.1, OM2Csound 2.4, OMChroma 5.2 (releases oficiais
+do `openmusic-project`). Csound 7.0 instalado no Windows. Cada patch do projeto (`patches/*.lisp`) foi carregado pelo
+Listener (`Lisp › Load File`), com plano fixo e semente 7, sem o Gemini; as saídas foram importadas pelo `retomar`.
+
+- **Chaos (`densidade_caotica.lisp`, `alea::verhulst`)**: entrada `0.1 2.8 3`; saída
+  `0.1000000000 0.3520000000 0.9906688000 1.0165523604`, igual à fórmula documentada em `orbitals.lisp`. Importada
+  sobre um quarteto de 4 compassos (mínimo 0,5, máximo 3 ataques por semínima): 2, 5, 12 e 12 ataques por compasso em
+  cada parte, eventos alterados com proveniência `openmusic`.
+- **Situation (`distribuir_restricoes.lisp`, `csolver` + `variable-domains` + `generic-cnstr`)**: primeira tentativa
+  falhou com `Arithmetic error in >= ...`, gravada em `erro.txt` pelo próprio patch: `generic-cnstr` já devolve a
+  lista de restrições e não deve ser embrulhada em outra lista. Corrigida, a saída foi
+  `6500 6400 5800 6600 6300 5500 5700 6100 5600 5900 6000 6200`: 12 alturas diferentes, cada uma na tessitura do seu
+  instrumento, aceitas pelo verificador. **Um problema sem solução (violinos com 6 vagas e 5 alturas ao alcance)
+  travou o OpenMusic** na busca exaustiva; o OM foi fechado à mão. Por isso o Muschat decide a existência antes pela
+  condição de Hall (necessária e suficiente para vagas -> alturas diferentes) e não envia problema impossível.
+- **OMChroma (`sintese_aditiva.lisp`, `om-make-array 'add-1` + `synthesize :run nil`)**: 159 parciais de um quarteto
+  de 2 compassos; o OMChroma escreveu `muschat.orc` (instrumento `add-1`: `poscil` com envelope por tabela) e
+  `muschat.sco` (linhas `i1` com início, duração, amplitude em dB e frequência enviadas). O Muschat renderizou com o
+  Csound 7.0: `muschat.wav`, mono 44,1 kHz, 8,0 s, pico 0,30. A composição ganhou a parte eletrônica (cues e curva de
+  parciais; nenhuma nota).
+- **Clouds**: instalada, sem patch (restrições definidas por caixas visuais, sem chamada por script).
+- **OM-SuperVP**: não instalada; o executável SuperVP depende de assinatura do IRCAM Forum. Detecção, importação de
+  dado espectral e `eventos_do_espectro` testados com fakes; nenhum patch validado.
+
+Artefatos locais: `.muschat/experimentos-reais/libs/`.
+
 ### Registro da retomada antes da execução
 
 - **[máquina]** OpenMusic 8.0 encontrado em `C:/Program Files/OpenMusic 8.0`; Esquisse 1.2 em

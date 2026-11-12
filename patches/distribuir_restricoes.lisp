@@ -39,8 +39,9 @@
       (let* ((dominios (muschat-situation-dominios (muschat-situation-ler (merge-pathnames "entrada.txt" pasta))))
              (n (length dominios))
              (vagas (loop for i below n collect i))
+             ;; generic-cnstr já devolve a lista de restrições (uma por par de vagas): vai direto para a Csolver
              (diferentes (generic-cnstr #'(lambda (a b) (/= a b)) vagas 'a))
-             (solucao (csolver n nil nil nil (list diferentes) nil (variable-domains dominios) nil 1))
+             (solucao (csolver n nil nil nil diferentes nil (variable-domains dominios) nil 1))
              (valores (remove-if-not #'numberp (flat solucao))))
         (muschat-situation-gravar pasta "saida.txt"
                                   (if valores (format nil "~{~D~^ ~}~%" valores) (format nil "-1~%")))

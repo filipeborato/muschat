@@ -158,19 +158,25 @@ def _problema(p: dict[str, float], plano: Plano | None) -> tuple[list[str], list
 
 
 def _situation_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None) -> str:
-    _, alturas, dominios = _problema(p, plano)
+    """Problema impossível nem vai ao OpenMusic: a busca exaustiva da Situation para provar que não há solução trava o
+    OM (visto no teste real). A condição de Hall abaixo decide a existência sozinha."""
+    nomes, alturas, dominios = _problema(p, plano)
+    condicoes, impossivel = _condicoes(nomes, alturas, dominios)
+    if impossivel:
+        raise ValueError(f"sem solução, nada enviado ao OpenMusic. Condições: {condicoes}")
     return f"{len(alturas)}\n" + "".join(f"{len(d)} {' '.join(map(str, d))}\n" for d in dominios)
 
 
-def _condicoes(nomes: list[str], alturas: list[int], dominios: list[list[int]]) -> str:
-    """As condições do problema e o que já se vê impossível, para o compositor relaxar."""
+def _condicoes(nomes: list[str], alturas: list[int], dominios: list[list[int]]) -> tuple[str, bool]:
+    """As condições do problema e, se não houver solução, o grupo de instrumentos que a impede. Vagas -> alturas
+    diferentes é um emparelhamento: pela condição de Hall, há solução sse nenhum grupo tem mais vagas que alcance."""
     linhas = [f"todas as {len(alturas)} alturas ({alturas[0]}–{alturas[-1]} mc) usadas uma vez (sem uníssono)"]
     vagas = [[s for s in range(len(alturas)) if s % len(nomes) == k] for k in range(len(nomes))]
     for k, nome in enumerate(nomes):
         lo, hi = instrumento(nome).tessitura
         linhas.append(f"{nome.capitalize()}: {len(vagas[k])} vagas dentro da tessitura {lo}–{hi} mc")
     # condição de Hall: um grupo de instrumentos com mais vagas do que alturas ao alcance não tem solução
-    # ponytail: todos os subconjuntos (2^k); k <= 8 instrumentos no plano, trocar por fluxo se orquestras vierem
+    # shortcut: todos os subconjuntos (2^k), ok até ~16 instrumentos; trocar por fluxo máximo se orquestras vierem
     problemas, culpados = [], []
     for grupo in sorted((g for g in range(1, 2 ** len(nomes))), key=lambda g: bin(g).count("1")):
         membros = [k for k in range(len(nomes)) if grupo >> k & 1]
@@ -185,13 +191,13 @@ def _condicoes(nomes: list[str], alturas: list[int], dominios: list[list[int]]) 
     fora = [a for a in alturas if not any(a in d for d in dominios)]
     if fora:
         problemas.append(f"nenhum instrumento alcança {fora}")
-    return "; ".join(linhas) + (". Impossível de saída: " + "; ".join(problemas) if problemas else "")
+    return "; ".join(linhas) + (". Impossível: " + "; ".join(problemas) if problemas else ""), bool(problemas)
 
 
 def _situation_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
     nomes, alturas, dominios = _problema(ctx.parametros, ctx.plano)
     if valores == [SEM_SOLUCAO]:
-        raise ValueError(f"a Situation não achou solução para as condições: {_condicoes(nomes, alturas, dominios)}")
+        raise ValueError(f"a Situation não achou solução para as condições: {_condicoes(nomes, alturas, dominios)[0]}")
     _contar(valores, len(alturas))
     if estranhas := [v for v in valores if v not in alturas]:
         raise ValueError(f"a solução tem alturas que não foram pedidas: {estranhas[:5]}")
@@ -365,7 +371,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="uma linha: x0 lambda iteracoes (iteracoes = compassos - 1)",
         saida="saida.txt: os valores da série (iteracoes + 1), separados por espaço",
         passos=_passos("densidade_caotica.lisp"),
-        montar=_chaos_montar, ler=_chaos_ler, arquivo="patches/densidade_caotica.lisp"),
+        montar=_chaos_montar, ler=_chaos_ler, arquivo="patches/densidade_caotica.lisp", validado=True),
     PatchAprovado(
         procedimento="distribuir_restricoes", biblioteca="situation", funcao_om="Csolver + generic-cnstr",
         descricao="Situation (Csolver com domínios por variável): cada vaga de cada instrumento recebe uma altura da "
@@ -373,7 +379,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="N; depois uma linha por vaga: tamanho do domínio seguido das alturas possíveis (midicents)",
         saida="saida.txt: N alturas na ordem das vagas, ou -1 se não houver solução",
         passos=_passos("distribuir_restricoes.lisp"),
-        montar=_situation_montar, ler=_situation_ler, arquivo="patches/distribuir_restricoes.lisp"),
+        montar=_situation_montar, ler=_situation_ler, arquivo="patches/distribuir_restricoes.lisp", validado=True),
     PatchAprovado(
         procedimento="sintese_aditiva", biblioteca="omchroma", funcao_om="add-1 + synthesize (:run nil)",
         descricao="OMChroma: cada nota vira parciais de síntese aditiva (classe add-1); o OMChroma escreve "
@@ -381,7 +387,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="N; depois N linhas: início (s) duração (s) frequência (Hz) amplitude (dB)",
         saida="saida.txt: N (parciais escritos); muschat.orc e muschat.sco na pasta da tarefa",
         passos=_passos("sintese_aditiva.lisp", " Também grava muschat.orc e muschat.sco."),
-        montar=_chroma_montar, ler=_chroma_ler, arquivo="patches/sintese_aditiva.lisp"),
+        montar=_chroma_montar, ler=_chroma_ler, arquivo="patches/sintese_aditiva.lisp", validado=True),
     PatchAprovado(
         procedimento="analise_supervp", biblioteca="om-supervp", funcao_om="supervp (análise de parciais)",
         descricao="OM-SuperVP: análise de parciais de um som escolhido no OpenMusic (o arquivo de som não é "
