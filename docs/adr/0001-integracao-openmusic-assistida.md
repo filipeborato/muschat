@@ -1,7 +1,8 @@
 # ADR 0001: integração com o OpenMusic por execução assistida com intercâmbio de arquivos
 
-Status: **proposto**. Fica aceito quando o protótipo de ida e volta rodar na máquina real (ver
-`docs/pesquisa/openmusic.md`, seção "Protótipo").
+Status: **aceito em 2026-11-11**. Ida e volta executada no OpenMusic 8.0 com Esquisse 1.2 no Windows,
+usando o workspace `.muschat/workspace`. Os 16 midicents coincidiram com o cálculo Python. Experimentos B e C
+concluídos com planos fixos, sem LLM; detalhes em `docs/pesquisa/openmusic.md`.
 
 ## Contexto
 
@@ -14,8 +15,8 @@ Evidência (detalhe e fontes em `docs/pesquisa/openmusic.md`):
 
 - Não há execução headless nem por linha de comando documentada. Os patches rodam na GUI.
 - O Listener Lisp é interativo, e carregar arquivos é feito pelo menu.
-- A pasta `init`, carregada na inicialização, só está documentada para a árvore de código-fonte. No app instalado,
-  não está provada.
+- A pasta `init` do app instalado contém `info.txt` documentando o carregamento na inicialização. O carregamento
+  efetivo ainda não foi testado; não fundamenta uma estratégia automática.
 - Há código OSC no repositório, mas o comportamento não está documentado. Disparar a avaliação de patches por OSC
   exigiria um patch receptor sempre aberto, e isso não está provado.
 - Os formatos de arquivo estão documentados: MusicXML (import e export de voice/poly), MIDI, SDIF e TextFile ligada a
@@ -28,11 +29,12 @@ Evidência (detalhe e fontes em `docs/pesquisa/openmusic.md`):
 - O Muschat gera uma **Tarefa OpenMusic** num diretório isolado e ignorado pelo git. A tarefa contém um arquivo de
   entrada só com dados (números serializados pelo projeto a partir de parâmetros validados, nunca texto livre nem
   Lisp), uma cópia de um **patch aprovado** versionado no projeto e as instruções passo a passo.
-- O compositor abre o patch no OM, avalia e devolve o arquivo de saída pela interface.
+- O compositor carrega `serie_harmonica.lisp` pelo menu `Lisp / Load File` do Listener e devolve a saída pela
+  interface. Esse script fixo do projeto lê `entrada.txt` ao lado do próprio arquivo e grava `saida.txt` ali.
 - O Muschat valida (formato, faixa de valores, número de eventos) e converte para MusicIR com proveniência
   `openmusic`.
-- Formato de retorno preferido: **texto com midicents**, sem perda para alturas e trivial de validar. A alternativa é
-  **MusicXML** (`export-musicxml`) quando o resultado tiver ritmo. O formato vencedor sai do protótipo.
+- Formato de retorno comprovado: **texto com midicents inteiros**, arredondados pela função `round` do Lisp antes
+  da quantização microtonal no Muschat. MusicXML direto do OM continua sem validação experimental.
 
 ## Consequências
 

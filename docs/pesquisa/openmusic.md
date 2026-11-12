@@ -9,6 +9,59 @@ bibliotecas, páginas de licença. Marcação usada abaixo:
 
 ## Estado nesta máquina
 
+### Execução real em 2026-11-11
+
+**Ida e volta comprovada.** O workspace `.muschat/workspace` abriu pela opção `Open previous workspace`.
+No Listener: `Lisp / Load File` → `.muschat/om-prototipo/rodar.lisp` → confirmação do carregamento da Esquisse.
+O Listener registrou Esquisse v. 1.2 e o carregamento do arquivo, e `saida.txt` foi criado pelo OM.
+As ferramentas de interface inicialmente indisponíveis foram substituídas por outra ferramenta de controle.
+
+Entrada: `3600 1 1 1 16`. Saída real:
+
+```text
+3600 4800 5502 6000 6386 6702 6969 7200 7404 7586 7751 7902 8041 8169 8288 8400
+```
+
+Os 16 valores coincidiram exatamente com `round(3600 + 1200 * log2(n))`, para `n = 1..16`.
+O script `patches/serie_harmonica.lisp` foi aprovado no catálogo; as tarefas agora recebem uma cópia local,
+também incluída no ZIP. Carregar essa cópia executa a tarefa, resolvendo a entrada a partir do próprio arquivo.
+
+**Experimento B:** tarefa `om-20261111-220208-e043c2`, executada no OM pelo menu Load File.
+**Experimento C:** tarefa `om-20261111-220208-663088`, executada da mesma forma. Ambas produziram a saída acima.
+Composições pendentes foram serializadas em JSON, restauradas e retomadas com as saídas reais.
+B terminou com proveniência OpenMusic e material espectral; C encadeou OpenMusic → Python (orquestração para
+dois violinos, viola e violoncelo) → Abjad/LilyPond. B gerou dois PDFs (grade e parte do material); C gerou
+cinco PDFs (grade e quatro partes), além dos SVGs da grade. Todos os PDFs tiveram cabeçalho `%PDF` verificado.
+Os sete PDFs foram abertos e renderizados (uma página cada); grade do quarteto e parte do violoncelo
+inspecionadas visualmente, com notação legível e sem cortes.
+
+Artefatos locais: `.muschat/experimentos-reais/{B,C}/`, incluindo entrada, patch, saída e partituras;
+JSONs pendentes e finais em `.muschat/experimentos-reais/`. Entrada e saída de referência também estão em
+`docs/pesquisa/evidencias-openmusic/`. Planos e semente 7 foram fixados para isolar a integração: o planejamento
+pelo Gemini e o fluxo de upload do Streamlit não foram exercitados nesses experimentos.
+
+ADR 0001 aceito. Estratégia comprovada: **assistida por arquivos**. A pasta `init` foi avaliada por sua
+documentação instalada, mas sem teste de execução; permanece uma possibilidade de evolução, não um modo
+automático disponível. MusicXML exportado diretamente do OM também não foi testado.
+
+### Registro da retomada antes da execução
+
+- **[máquina]** OpenMusic 8.0 encontrado em `C:/Program Files/OpenMusic 8.0`; Esquisse 1.2 em
+  `C:/Users/filipe/OM/Libraries/Esquisse 1.2`. O registro de ausência abaixo é anterior à instalação.
+- **[máquina]** O código instalado confirma os menus `Midics = 1` e `Chord = 1` de `harm-series`.
+- **[máquina]** `init/info.txt` do aplicativo instalado declara o carregamento automático de arquivos Lisp.
+  O funcionamento real ainda não foi testado; nenhum arquivo foi colocado nessa pasta nesta retomada.
+- O controle da interface retornou `Computer Use native pipe is unavailable`, também pelo fallback CUA.
+  Nenhum clique foi enviado e o estado do workspace não pôde ser observado.
+- Carregador local preparado em `.muschat/om-prototipo/rodar.lisp` (ignorado pelo git), com entrada
+  `3600 1 1 1 16`. Os caminhos são resolvidos a partir do próprio carregador, sem o temporário do Claude.
+  Ele carrega `patches/serie_harmonica.lisp` e deve gravar `saida.txt` ao lado de `entrada.txt`.
+- **Execução real pendente.** Comparar a saída com `round(3600 + 1200 * log2(n))`, para `n` de 1 a 16,
+  antes da quantização microtonal. Os valores esperados em Python não comprovam execução no OpenMusic.
+  O ADR permanece proposto; o patch ainda não foi liberado no catálogo. Experimentos B e C pendentes.
+
+### Registro anterior à instalação
+
 - **[máquina]** O OpenMusic **não está instalado** (nada em `C:\Program Files`, `C:\Program Files (x86)` nem em
   `Documents`). Também não há LilyPond, Csound nem SuperVP no PATH. O protótipo de ida e volta depende de o usuário
   instalar o OpenMusic e a Esquisse (ver "Protótipo").
@@ -158,7 +211,7 @@ torna o Muschat, se for distribuído, um trabalho combinado sujeito à GPL-3.0. 
 compatível se o Muschat for publicado sob GPL-3.0 (ou não for redistribuído). **Decisão (2026-11-11): o usuário
 aceitou a GPL-3.0 e o Abjad entrou no ticket 05.** Em testes, o LilyPond 2.26.0 (estável) atende ao mínimo de 2.25.26.
 
-## Protótipo de ida e volta (pendente: precisa do usuário)
+## Roteiro original do protótipo (registro anterior à instalação)
 
 **Não executado.** O OpenMusic não está instalado nesta máquina, e o aceite pede execução real. Nenhum resultado
 abaixo é inventado. Roteiro proposto, para o usuário rodar e registrar:

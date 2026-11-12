@@ -8,6 +8,7 @@ import io
 import math
 import os
 import re
+import shutil
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -92,7 +93,7 @@ class PatchAprovado:
     entrada: str  # formato do entrada.txt
     saida: str  # formato do saida.txt
     passos: tuple[str, ...]  # instruções para montar/rodar no OM
-    arquivo: str | None = None  # .omp versionado em patches/; None enquanto o protótipo do ADR 0001 não rodar
+    arquivo: str | None = None  # patch do projeto validado no OpenMusic real
 
 
 PATCHES: dict[str, PatchAprovado] = {
@@ -104,15 +105,14 @@ PATCHES: dict[str, PatchAprovado] = {
         entrada="uma linha: fundamental_em_midicents numer denom begin end (ex.: 3600 1 1 1 16)",
         saida="saida.txt: a lista de midicents, separados por espaço (parênteses são aceitos)",
         passos=(
-            "Abra o OpenMusic e confira que a biblioteca Esquisse está carregada (Preferências › Libraries).",
-            "Num patch novo, crie a caixa `harm-series` (Esquisse) e, ao lado, uma caixa TextFile.",
-            "Abra `entrada.txt` desta tarefa e ligue os cinco números às entradas fund, numer, denom, begin e end "
-            "de harm-series; no menu unit escolha Midics (1) e no menu type, Chord (1).",
-            "Ligue a saída de harm-series a uma TextFile (ou use save-as-text) gravando `saida.txt` na pasta desta "
-            "tarefa.",
-            "Avalie a caixa final (selecione e tecle v). Confira que `saida.txt` tem só números.",
+            "Extraia o ZIP inteiro para uma pasta; mantenha entrada.txt e serie_harmonica.lisp juntos.",
+            "Abra o OpenMusic com o workspace deste projeto.",
+            "No Listener, use Lisp › Load File e selecione serie_harmonica.lisp da pasta da tarefa.",
+            "Confirme o carregamento da Esquisse se solicitado. O script lê entrada.txt e grava saida.txt "
+            "na mesma pasta, usando Midics (1) e Chord (1).",
             "Volte ao Muschat e envie `saida.txt` em “Aguardando você”.",
         ),
+        arquivo="patches/serie_harmonica.lisp",
     ),
 }
 
@@ -187,6 +187,8 @@ def criar_tarefa(procedimento: str, parametros: dict[str, float], *, raiz: Path 
     pasta.mkdir(parents=True, exist_ok=True)
     (pasta / "entrada.txt").write_text(tarefa.entrada(), encoding="utf-8")
     (pasta / "instrucoes.md").write_text(tarefa.instrucoes(), encoding="utf-8")
+    if tarefa.patch.arquivo:
+        shutil.copyfile(tarefa.patch.arquivo, pasta / Path(tarefa.patch.arquivo).name)
     return tarefa
 
 

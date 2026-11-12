@@ -1,5 +1,7 @@
 """Registro, roteador, bridge OpenMusic (assistido) e lista de etapas com pausa/retomada."""
 
+import io
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -105,7 +107,7 @@ def test_registro_detecta_bibliotecas_e_dependencias_externas(tmp_path):
     reg = detectar(lilypond=None, openmusic=om, abjad_versao="3.31", which=lambda e: None, patches=PATCH_DE_TESTE)
     estado = {c.nome: (c.estado, c.motivo) for c in reg.capacidades}
     assert estado["OpenMusic"][0] == "manual" and estado["Esquisse"][0] == "manual"
-    sem_omp = detectar(lilypond=None, openmusic=om, abjad_versao="3.31", which=lambda e: None)
+    sem_omp = detectar(lilypond=None, openmusic=om, abjad_versao="3.31", which=lambda e: None, patches={})
     assert sem_omp.capacidade("Esquisse").estado == "indisponivel"  # instalada, mas sem o .omp aprovado
     assert estado["Chaos"] == ("indisponivel", "instalada, mas ainda sem patch aprovado no projeto")
     assert estado["OMChroma"] == ("indisponivel", "instalada, mas falta o executável: csound")
@@ -134,6 +136,11 @@ def test_etapa_openmusic_cria_tarefa_e_aguarda_o_compositor(tmp_path):
     assert (pasta / "entrada.txt").read_text() == "3600 1 1 1 16\n"
     assert "harm-series" in (pasta / "instrucoes.md").read_text(encoding="utf-8")
     assert b"entrada.txt" in r.tarefa.pacote()
+    patch = Path(PATCHES["serie_harmonica"].arquivo)
+    assert (pasta / patch.name).read_bytes() == patch.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(r.tarefa.pacote())) as pacote:
+        assert pacote.read(patch.name) == patch.read_bytes()
+        assert pacote.read("entrada.txt") == b"3600 1 1 1 16\n"
 
 
 def test_saida_valida_vira_versao_com_proveniencia_openmusic(tmp_path):
