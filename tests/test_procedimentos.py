@@ -193,7 +193,7 @@ def test_mesma_semente_mesmo_resultado(quarteto, nome, params):
 
 def test_todo_procedimento_preserva_ou_cria_pausas_validas(quarteto):
     for nome, proc in CATALOGO.items():
-        if proc.requer_composicao:
+        if proc.requer_composicao and proc.funcao and nome != "eventos_do_espectro":  # este pede dado espectral
             novo = _rodar(nome, quarteto)
             assert all(isinstance(e, (Nota, Pausa)) for _, _, e in novo.eventos())
 

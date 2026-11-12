@@ -1,11 +1,12 @@
 """Densidade e transformações progressivas: rampas lineares ao longo dos compassos do trecho."""
 
 import random
+from collections.abc import Callable
 from fractions import Fraction
 
 from muschat import musicir as ir
 from muschat.notacao.tecnicas import cabe
-from muschat.plano import Plano
+from muschat.plano import Plano, Selecao
 from muschat.procedimentos.comum import (
     DINAMICAS, Grade, Ids, com_alturas, exigir, interpolar, pausa, por_compasso, por_voz,
 )
@@ -21,14 +22,21 @@ def _metades(d: Fraction) -> tuple[Fraction, Fraction] | None:
 
 
 def densidade(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:
-    """Ataques por semínima em rampa do primeiro ao último compasso: remove ataques (viram pausas) ou cria
-    (pausa vira nota com altura já usada na voz; nota se divide em duas)."""
+    """Ataques por semínima em rampa do primeiro ao último compasso."""
     atual = exigir(atual)
-    ids = Ids(atual)
     primeiro, ultimo = Grade(atual).trecho(plano.selecao)
+    return densidade_por_compasso(atual, plano.selecao,
+                                  lambda n: interpolar(p["inicial"], p["final"], n, primeiro, ultimo), rng)
+
+
+def densidade_por_compasso(atual: ir.MusicIR, selecao: Selecao, alvo_de: Callable[[int], float],
+                           rng: random.Random) -> ir.MusicIR:
+    """Ataques por semínima do compasso n = alvo_de(n): remove ataques (viram pausas) ou cria (pausa vira nota com
+    altura já usada na voz; nota se divide em duas)."""
+    ids = Ids(atual)
 
     def compasso(parte: ir.Parte, voz: ir.Voz, grupo: list[ir.Evento], n: int) -> list[ir.Evento]:
-        alvo = round(interpolar(p["inicial"], p["final"], n, primeiro, ultimo) * 4 * atual.compassos[n - 1].comprimento)
+        alvo = round(alvo_de(n) * 4 * atual.compassos[n - 1].comprimento)
         reservatorio = sorted({a.midicents for e in voz.eventos if isinstance(e, ir.Nota) for a in e.alturas})
         eventos = list(grupo)
 
@@ -57,7 +65,7 @@ def densidade(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: 
                                                      "dinamica": None, "texto": None})]
         return eventos
 
-    return por_compasso(atual, plano.selecao, compasso)
+    return por_compasso(atual, selecao, compasso)
 
 
 def registro_progressivo(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],

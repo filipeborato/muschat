@@ -1,7 +1,7 @@
 """Registro de capacidades: o que cada motor, biblioteca e gravador consegue fazer NESTA máquina, e em que modo.
 
 Detectado em tempo de execução; nada aparece como disponível só por estar planejado (uma biblioteca do OpenMusic só
-oferece um procedimento quando está instalada E o patch .omp aprovado dela está no projeto).
+oferece um procedimento quando está instalada E o patch aprovado dela está no projeto E já rodou no OpenMusic real).
 """
 
 import shutil
@@ -14,6 +14,8 @@ from muschat.notacao.lilypond import Lilypond
 from muschat.openmusic import PATCHES, InstalacaoOM, PatchAprovado
 from muschat.procedimentos import CATALOGO
 
+NATIVOS = tuple(n for n, p in CATALOGO.items() if p.funcao is not None)  # o que o motor Python executa
+
 Estado = Literal["indisponivel", "manual", "intercambio_arquivos", "automatico"]
 Motor = Literal["python", "openmusic"]
 PREFERENCIA: dict[Estado, int] = {"automatico": 0, "intercambio_arquivos": 1, "manual": 2, "indisponivel": 3}
@@ -25,7 +27,7 @@ ROTULO_DO_ESTADO: dict[Estado, str] = {"automatico": "automático", "intercambio
 @dataclass(frozen=True)
 class Capacidade:
     nome: str
-    tipo: Literal["motor", "biblioteca", "gravacao"]
+    tipo: Literal["motor", "biblioteca", "gravacao", "externo"]
     estado: Estado
     motivo: str  # por que está nesse estado (o que falta, quando indisponível)
     versao: str | None = None
@@ -62,11 +64,11 @@ class Registro:
         return list(nomes)
 
     @classmethod
-    def so_python(cls, procedimentos: tuple[str, ...] = tuple(CATALOGO)) -> "Registro":
+    def so_python(cls, procedimentos: tuple[str, ...] = NATIVOS) -> "Registro":
         return cls((_python(procedimentos),))
 
 
-def _python(procedimentos: tuple[str, ...] = tuple(CATALOGO)) -> Capacidade:
+def _python(procedimentos: tuple[str, ...] = NATIVOS) -> Capacidade:
     return Capacidade("Python", "motor", "automatico", "procedimentos puros sobre a MusicIR, com semente",
                       procedimentos=procedimentos, entradas="MusicIR", saidas="MusicIR",
                       limitacoes="sem ligadura; transpositores em som real")
@@ -80,7 +82,7 @@ _BIBLIOTECAS_OM = {
     "Situation": ("situation", ()),
     "Clouds": ("clouds", ()),
     "OM2Csound": ("om2csound", ("csound",)),
-    "OMChroma": ("omchroma", ("csound",)),
+    "OMChroma": ("omchroma", ()),  # escreve .orc/.sco; o áudio depende da capacidade Csound
     "OM-SuperVP": ("om-supervp", ("supervp",)),
 }
 
@@ -110,9 +112,15 @@ def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad
             "headless documentado, o compositor roda o patch aprovado e devolve o arquivo",
             versao=openmusic.versao, entradas="entrada.txt (números)", saidas="saida.txt (midicents)",
             limitacoes="cada etapa espera o compositor"))
+    for nome, exe, uso in (("Csound", "csound", "renderiza o áudio da síntese do OMChroma (.orc/.sco -> .wav)"),
+                           ("SuperVP", "supervp", "análise de som do OM-SuperVP (IRCAM Forum, licença própria)")):
+        caminho = which(exe)
+        caps.append(Capacidade(nome, "externo", "automatico" if caminho else "indisponivel",
+                               f"em {caminho}; {uso}" if caminho else f"executável {exe} não encontrado no PATH; {uso}"))
     for nome, (chave, externos) in _BIBLIOTECAS_OM.items():
         da_biblioteca = [p for p in patches.values() if p.biblioteca == chave]
-        aprovados = tuple(p.procedimento for p in da_biblioteca if p.arquivo and Path(p.arquivo).is_file())
+        aprovados = tuple(p.procedimento for p in da_biblioteca
+                          if p.validado and p.arquivo and Path(p.arquivo).is_file())
         faltando = [e for e in externos if which(e) is None]
         estado: Estado = "indisponivel"
         if openmusic is None:
@@ -122,7 +130,7 @@ def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad
         elif faltando:
             motivo = f"instalada, mas falta o executável: {', '.join(faltando)}"
         elif not aprovados:
-            motivo = ("instalada, mas o patch .omp aprovado ainda não está no projeto" if da_biblioteca
+            motivo = ("instalada; o patch do projeto ainda não foi validado no OpenMusic real" if da_biblioteca
                       else "instalada, mas ainda sem patch aprovado no projeto")
         else:
             estado, motivo = "manual", f"em {openmusic.bibliotecas[chave]}"

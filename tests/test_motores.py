@@ -110,7 +110,9 @@ def test_registro_detecta_bibliotecas_e_dependencias_externas(tmp_path):
     sem_omp = detectar(lilypond=None, openmusic=om, abjad_versao="3.31", which=lambda e: None, patches={})
     assert sem_omp.capacidade("Esquisse").estado == "indisponivel"  # instalada, mas sem o .omp aprovado
     assert estado["Chaos"] == ("indisponivel", "instalada, mas ainda sem patch aprovado no projeto")
-    assert estado["OMChroma"] == ("indisponivel", "instalada, mas falta o executável: csound")
+    assert estado["OMChroma"] == ("indisponivel", "instalada, mas ainda sem patch aprovado no projeto")
+    assert estado["Csound"][0] == "indisponivel" and "csound não encontrado" in estado["Csound"][1]
+    assert estado["SuperVP"][0] == "indisponivel" and "IRCAM" in estado["SuperVP"][1]
     assert estado["OM-SuperVP"] == ("indisponivel", "não instalada em ~/OM/Libraries")
     assert estado["LilyPond"][0] == "indisponivel" and estado["Python"][0] == "automatico"
 
@@ -119,7 +121,7 @@ def test_sem_openmusic_tudo_que_depende_dele_fica_indisponivel_com_motivo():
     estado = {c.nome: (c.estado, c.motivo) for c in SEM_OM.capacidades}
     assert estado["OpenMusic"][0] == "indisponivel" and "OPENMUSIC" in estado["OpenMusic"][1]
     assert all(estado[n] == ("indisponivel", "precisa do OpenMusic") for n in ("Esquisse", "Chaos", "OM-SuperVP"))
-    assert SEM_OM.disponiveis() == list(CATALOGO)
+    assert SEM_OM.disponiveis() == [n for n, p in CATALOGO.items() if p.funcao is not None]
 
 
 # --- ticket 08: OpenMusic assistido -------------------------------------------------------------------------------------
@@ -159,7 +161,7 @@ def test_saida_valida_vira_versao_com_proveniencia_openmusic(tmp_path):
     ("3600,5 4800", "além de números"),
     ("3600 4800", "2 valores"),
     (SAIDA_16.replace("8400", "99999"), "fora de 0–12700"),
-    ("1 " * 40_000, "limite"),
+    ("1 " * 140_000, "limite"),
     (b"\xff\xfe\x00", "não é texto"),
 ])
 def test_saida_malformada_e_recusada_e_a_tarefa_continua_aguardando(tmp_path, saida, trecho):

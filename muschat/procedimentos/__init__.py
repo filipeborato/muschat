@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from muschat import musicir as ir
 from muschat.plano import Plano
+from muschat.procedimentos.espectrais import eventos_do_espectro
 from muschat.procedimentos.geracao import distribuir, orquestrar_material, serie_harmonica
 from muschat.procedimentos.melodicos import intervalos, inverter, retrogradar, rotacionar, transpor
 from muschat.procedimentos.progressivos import (
@@ -37,7 +38,7 @@ class Procedimento:
     nome: str
     descricao: str
     parametros: dict[str, Faixa]
-    funcao: Funcao
+    funcao: Funcao | None  # None: só existe como patch aprovado do OpenMusic (muschat.patches_om)
     requer_composicao: bool = True
 
 
@@ -107,4 +108,38 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
     Procedimento("distribuir", "Distribui as notas de uma parte de origem entre as partes selecionadas, cada nota "
                  "numa parte cuja tessitura a contém; as partes de destino são reescritas no trecho.",
                  {"parte_origem": Faixa(1, 16, 1, "número da parte de origem (1 = primeira)")}, distribuir),
+    Procedimento("eventos_do_espectro", "Cria partes instrumentais a partir do dado espectral da composição (ex.: "
+                 "análise do OM-SuperVP): em cada quadro, os parciais mais fortes viram alturas distribuídas do agudo "
+                 "ao grave entre os instrumentos do plano, na tessitura de cada um; o dado espectral fica.",
+                 {"alturas_por_quadro": Faixa(1, 8, 4, "quantos parciais mais fortes por quadro"),
+                  "microtom": Faixa(0, 2, 1, "aproximação: 0 semitom, 1 quarto de tom, 2 oitavo de tom")},
+                 eventos_do_espectro),
+    # --- só no OpenMusic (patches aprovados; o Python não executa) ---
+    Procedimento("densidade_caotica", "Só no OpenMusic (Chaos): o mapa logístico de Verhulst dá um valor por "
+                 "compasso da seleção, normalizado e usado como densidade de ataques entre mínimo e máximo.",
+                 {"x0": Faixa(0.01, 0.99, 0.1, "valor inicial da série (população inicial)", inteiro=False),
+                  "turbulencia": Faixa(0, 3, 2.8, "lambda de Verhulst: acima de ~2.57 o processo é caótico",
+                                       inteiro=False),
+                  "minimo": Faixa(0, 4, 0.5, "ataques por semínima no menor valor da série", inteiro=False),
+                  "maximo": Faixa(0, 4, 3, "ataques por semínima no maior valor da série", inteiro=False)},
+                 None),
+    Procedimento("distribuir_restricoes", "Só no OpenMusic (Situation): cria uma peça nova em que N alturas "
+                 "(base + k*passo) são distribuídas entre os instrumentos do plano por um solver de restrições, "
+                 "cada uma na tessitura do instrumento, todas diferentes (sem uníssonos). Um acorde por compasso.",
+                 {"alturas": Faixa(4, 24, 12, "quantas alturas"),
+                  "base": Faixa(2400, 8400, 5500, "altura mais grave", unidade="midicents (5500 = Sol 3)"),
+                  "passo": Faixa(50, 1200, 100, "distância entre alturas vizinhas", unidade="cents")},
+                 None, requer_composicao=False),
+    Procedimento("sintese_aditiva", "Só no OpenMusic (OMChroma + Csound): as notas da seleção controlam uma "
+                 "síntese aditiva; cada nota vira parciais harmônicos cuja quantidade cresce do início ao fim. Gera "
+                 ".orc/.sco (e áudio, com Csound) e acrescenta uma parte eletrônica (cues e curva, não notas).",
+                 {"parciais_inicial": Faixa(1, 32, 2, "parciais por nota no início"),
+                  "parciais_final": Faixa(1, 32, 16, "parciais por nota no fim"),
+                  "amplitude": Faixa(-40, 0, -18, "amplitude do fundamental", inteiro=False, unidade="dB")},
+                 None),
+    Procedimento("analise_supervp", "Só no OpenMusic (OM-SuperVP, executável SuperVP): analisa um som e cria uma "
+                 "peça nova com o resultado como dado espectral (nunca como notas); use eventos_do_espectro depois.",
+                 {"parciais": Faixa(1, 64, 16, "parciais por quadro"),
+                  "quadros": Faixa(1, 64, 8, "quantos quadros de análise")},
+                 None, requer_composicao=False),
 ]}

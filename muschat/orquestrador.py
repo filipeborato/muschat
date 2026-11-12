@@ -58,7 +58,7 @@ def compor(
     catalogo: dict[str, Procedimento] = CATALOGO,
     pasta_tarefas: Path = PASTA_TAREFAS,
 ) -> Resultado:
-    registro = registro or Registro.so_python(tuple(catalogo))
+    registro = registro or Registro.so_python(_nativos(catalogo))
     if composicao.pendente:
         return _aguardando(composicao.pendente)
     atual = composicao.atual.ir if composicao.atual else None
@@ -86,7 +86,8 @@ def reaplicar(composicao: Composicao, parametros: list[dict[str, float]], *, reg
         for op, novos in zip(plano.operacoes, parametros, strict=True)]})
     return _aplicar(plano, composicao, versao.anterior, pedido=f"{versao.experimento['pedido']} (reaplicado)",
                     modelo=versao.experimento["modelo"], modo=versao.experimento.get("modo", "automatico"),
-                    registro=registro or Registro.so_python(tuple(catalogo)), catalogo=catalogo, pasta=pasta_tarefas)
+                    registro=registro or Registro.so_python(_nativos(catalogo)), catalogo=catalogo,
+                    pasta=pasta_tarefas)
 
 
 def retomar(composicao: Composicao, saida: bytes | str, *, catalogo: dict[str, Procedimento] = CATALOGO,
@@ -96,7 +97,8 @@ def retomar(composicao: Composicao, saida: bytes | str, *, catalogo: dict[str, P
     if p is None or p.tarefa is None:
         return _recusa(Recusa("nenhuma etapa do OpenMusic está aguardando."))
     try:
-        material = importar(p.tarefa, saida, operacao=p.operacao)
+        material = importar(p.tarefa, saida, operacao=p.operacao, atual=p.atual, plano=p.plano,
+                            rng=random.Random(f"{p.semente}/{p.etapa}"))
     except ValueError as exc:  # a tarefa continua aguardando: o compositor pode reenviar
         return Resultado(f"A saída do OpenMusic foi recusada e a tarefa continua aguardando você: {exc}.", None,
                          p.tarefa)
@@ -157,9 +159,12 @@ def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catal
         etapa = ctx.decisao.etapas[k]
         if etapa.motor == "openmusic":
             try:
-                tarefa = criar_tarefa(etapa.procedimento, ctx.parametros[k], raiz=pasta)
+                tarefa = criar_tarefa(etapa.procedimento, ctx.parametros[k], raiz=pasta, atual=atual,
+                                      plano=ctx.plano)
             except OSError as exc:
                 raise Recusa(f"não foi possível criar a pasta da tarefa do OpenMusic ({exc})") from exc
+            except ValueError as exc:  # a entrada do patch não se monta (ex.: seleção sem notas)
+                raise Recusa(f"etapa {k + 1} ({etapa.procedimento}): {_primeira_linha(exc)}") from exc
             composicao.pendente = ctx.model_copy(update={"etapa": k, "atual": atual, "tarefa": tarefa,
                                                          "intermediarios": intermediarios})
             return Resultado(f"Aguardando você: etapa {k + 1} de {len(ctx.decisao.etapas)}, {etapa.procedimento} no "
@@ -240,6 +245,10 @@ def _carimbar(ir: MusicIR, ids: set[str], origem: Origem, operacao: str) -> Musi
     return ir.model_copy(update={"partes": [p.model_copy(update={"vozes": [v.model_copy(update={"eventos": [
         e.model_copy(update={"proveniencia": prov(e.proveniencia)}) if e.id in ids else e for e in v.eventos
     ]}) for v in p.vozes]}) for p in ir.partes]})
+
+
+def _nativos(catalogo: dict[str, Procedimento]) -> tuple[str, ...]:
+    return tuple(n for n, p in catalogo.items() if p.funcao is not None)
 
 
 def _primeira_linha(exc: Exception) -> str:

@@ -5,25 +5,26 @@ Nenhum Lisp é gerado nem executado; nada do OM roda a partir daqui.
 """
 
 import io
-import math
 import os
+import random
 import re
 import shutil
 import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
-from fractions import Fraction
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
 from muschat import musicir as ir
+from muschat.patches_om import FALHOU, PATCHES, Contexto, PatchAprovado, material
+from muschat.plano import Plano
 
 # shortcut: relativa à pasta onde o app roda (a raiz do projeto); evoluir para uma pasta configurável se o app
 # passar a rodar de outro lugar
 PASTA_TAREFAS = Path(".muschat") / "openmusic"  # ignorada pelo git
-LIMITE_SAIDA = 64_000  # bytes: uma lista de midicents nunca chega perto disso
+LIMITE_SAIDA = 256_000  # bytes: uma análise espectral de 64 quadros x 64 parciais cabe com folga
 _NUMERO = re.compile(r"^-?\d+(?:\.\d+)?$")  # um valor; separadores aceitos: espaços e parênteses (lista Lisp)
 
 
@@ -82,45 +83,10 @@ def detectar_openmusic(configurado: str | None = None, *, raizes: list[Path] | N
     return None
 
 
-# --- patches aprovados ---------------------------------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class PatchAprovado:
-    procedimento: str  # nome no catálogo (o mesmo conceito do procedimento Python, quando houver)
-    biblioteca: str  # chave normalizada da biblioteca que o patch chama
-    funcao_om: str
-    descricao: str
-    entrada: str  # formato do entrada.txt
-    saida: str  # formato do saida.txt
-    passos: tuple[str, ...]  # instruções para montar/rodar no OM
-    arquivo: str | None = None  # patch do projeto validado no OpenMusic real
-
-
-PATCHES: dict[str, PatchAprovado] = {
-    "serie_harmonica": PatchAprovado(
-        procedimento="serie_harmonica",
-        biblioteca="esquisse",
-        funcao_om="harm-series",
-        descricao="Série harmônica pela Esquisse (harm-series, unit = Midics): devolve alturas em midicents.",
-        entrada="uma linha: fundamental_em_midicents numer denom begin end (ex.: 3600 1 1 1 16)",
-        saida="saida.txt: a lista de midicents, separados por espaço (parênteses são aceitos)",
-        passos=(
-            "Extraia o ZIP inteiro para uma pasta; mantenha entrada.txt e serie_harmonica.lisp juntos.",
-            "Abra o OpenMusic com o workspace deste projeto.",
-            "No Listener, use Lisp › Load File e selecione serie_harmonica.lisp da pasta da tarefa.",
-            "Confirme o carregamento da Esquisse se solicitado. O script lê entrada.txt e grava saida.txt "
-            "na mesma pasta, usando Midics (1) e Chord (1).",
-            "Volte ao Muschat e envie `saida.txt` em “Aguardando você”.",
-        ),
-        arquivo="patches/serie_harmonica.lisp",
-    ),
-}
-
+# --- patches aprovados: formatos em muschat.patches_om ---------------------------------------------------------------
 
 # --- Tarefa ---------------------------------------------------------------------------------------------------------------
 
-# shortcut: entrada, quantidade esperada e importação seguem o formato do único patch (serie_harmonica); um
-# segundo patch traz o próprio formato para PatchAprovado
 class Tarefa(BaseModel):
     """Pacote de uma etapa assistida: guardado na Composição (sobrevive a rerun e vai no JSON)."""
 
@@ -129,6 +95,7 @@ class Tarefa(BaseModel):
     parametros: dict[str, float]
     pasta: str
     criada: datetime = Field(default_factory=datetime.now)
+    conteudo: str | None = None  # entrada.txt enviada; None nos JSONs da série harmônica anteriores ao campo
 
     @model_validator(mode="after")
     def _valida(self) -> "Tarefa":
@@ -150,22 +117,20 @@ class Tarefa(BaseModel):
     def patch(self) -> PatchAprovado:
         return PATCHES[self.procedimento]
 
-    @property
-    def esperados(self) -> int:
-        return int(self.parametros["parciais"])
-
     def entrada(self) -> str:
-        return f"{int(self.parametros['fundamental'])} 1 1 1 {self.esperados}\n"
+        return self.conteudo if self.conteudo is not None else self.patch.montar(self.parametros, None, None)
 
     def instrucoes(self) -> str:
         p = self.patch
         passos = "\n".join(f"{n}. {s}" for n, s in enumerate(p.passos, 1))
         arquivo = (f"Patch aprovado: `{p.arquivo}` (copiado nesta pasta)." if p.arquivo else
-                   "O patch `.omp` aprovado ainda não está no projeto (o protótipo do ADR 0001 ainda não rodou): "
-                   "monte-o com os passos abaixo, sem escrever código Lisp.")
+                   "Este patch ainda não foi validado no OpenMusic real e não está no projeto.")
+        conteudo = self.entrada().strip()
+        if len(conteudo) > 400:
+            conteudo = f"{conteudo[:400]}… ({len(conteudo.splitlines())} linhas)"
         return (f"# Tarefa OpenMusic {self.id}: {p.funcao_om} ({p.biblioteca})\n\n{p.descricao}\n\n{arquivo}\n\n"
-                f"Entrada (`entrada.txt`): {p.entrada}\nConteúdo: `{self.entrada().strip()}`\n\n"
-                f"Saída esperada: {p.saida}; {self.esperados} valores.\n\n{passos}\n")
+                f"Entrada (`entrada.txt`): {p.entrada}\nConteúdo: `{conteudo}`\n\n"
+                f"Saída esperada: {p.saida}.\n\n{passos}\n")
 
     def pacote(self) -> bytes:
         """Zip com entrada.txt e instrucoes.md (e o patch, quando houver), para baixar ou levar a outra máquina."""
@@ -178,12 +143,16 @@ class Tarefa(BaseModel):
         return buffer.getvalue()
 
 
-def criar_tarefa(procedimento: str, parametros: dict[str, float], *, raiz: Path = PASTA_TAREFAS) -> Tarefa:
+def criar_tarefa(procedimento: str, parametros: dict[str, float], *, raiz: Path = PASTA_TAREFAS,
+                 atual: ir.MusicIR | None = None, plano: Plano | None = None) -> Tarefa:
+    """Monta a entrada (só números, pelo formato do patch) antes de criar a pasta: entrada impossível = nada criado."""
     if procedimento not in PATCHES:
         raise ValueError(f"não há patch aprovado para {procedimento}")
+    conteudo = PATCHES[procedimento].montar(parametros, atual, plano)
     tarefa_id = f"om-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
     pasta = raiz / tarefa_id
-    tarefa = Tarefa(id=tarefa_id, procedimento=procedimento, parametros=parametros, pasta=str(pasta))
+    tarefa = Tarefa(id=tarefa_id, procedimento=procedimento, parametros=parametros, pasta=str(pasta),
+                    conteudo=conteudo)
     pasta.mkdir(parents=True, exist_ok=True)
     (pasta / "entrada.txt").write_text(tarefa.entrada(), encoding="utf-8")
     (pasta / "instrucoes.md").write_text(tarefa.instrucoes(), encoding="utf-8")
@@ -194,9 +163,10 @@ def criar_tarefa(procedimento: str, parametros: dict[str, float], *, raiz: Path 
 
 # --- importação da saída ---------------------------------------------------------------------------------------------------
 
-def importar(tarefa: Tarefa, saida: bytes | str, *, operacao: str) -> ir.MusicIR:
-    """Valida a saída (tamanho, só números, faixa 0–12700, quantidade esperada) e devolve o material como MusicIR de
-    uma parte, uma semínima por altura, com proveniência `openmusic`. Levanta ValueError com a mensagem ao usuário."""
+def importar(tarefa: Tarefa, saida: bytes | str, *, operacao: str, atual: ir.MusicIR | None = None,
+             plano: Plano | None = None, rng: random.Random | None = None) -> ir.MusicIR:
+    """Valida a saída (tamanho, texto, só números) e entrega ao formato do patch, que confere quantidade e faixas e
+    devolve a MusicIR com proveniência `openmusic`. Levanta ValueError com a mensagem ao usuário."""
     dados = saida if isinstance(saida, bytes) else saida.encode("utf-8")
     if len(dados) > LIMITE_SAIDA:
         raise ValueError(f"a saída tem {len(dados)} bytes; o limite é {LIMITE_SAIDA}")
@@ -208,28 +178,15 @@ def importar(tarefa: Tarefa, saida: bytes | str, *, operacao: str) -> ir.MusicIR
     if invalidos := [p for p in pedacos if not _NUMERO.match(p)]:
         raise ValueError(f"a saída tem algo além de números separados por espaço: {invalidos[:3]}")
     valores = [float(x) for x in pedacos]
-    if len(valores) != tarefa.esperados:
-        raise ValueError(f"a saída tem {len(valores)} valores; a tarefa pediu {tarefa.esperados}")
-    if fora := [v for v in valores if not 0 <= v <= 12700]:
-        raise ValueError(f"valores fora de 0–12700 midicents: {fora[:5]}")
-    passo = 100 // 2 ** int(tarefa.parametros.get("microtom", 1))
-    alturas = [round(v / passo) * passo for v in valores]
-    return material(alturas, titulo=f"Série harmônica sobre {tarefa.parametros['fundamental']:.0f} mc (OpenMusic)",
-                    proveniencia=ir.Proveniencia(origem="openmusic", autor="OpenMusic/Esquisse", operacao=operacao))
-
-
-def material(alturas: list[int], *, titulo: str, proveniencia: ir.Proveniencia) -> ir.MusicIR:
-    """Alturas como uma voz de semínimas em 4/4; o último compasso se completa com pausa."""
-    compassos = max(1, math.ceil(len(alturas) / 4))
-    eventos: list[ir.Evento] = [
-        ir.Nota(id=f"M1V1E{k + 1}", inicio=Fraction(k, 4), duracao=Fraction(1, 4), proveniencia=proveniencia,
-                alturas=[ir.Altura(midicents=a)]) for k, a in enumerate(alturas)]
-    resto = Fraction(compassos) - Fraction(len(alturas), 4)
-    if resto:
-        eventos.append(ir.Pausa(id=f"M1V1E{len(alturas) + 1}", inicio=Fraction(len(alturas), 4), duracao=resto,
-                                proveniencia=proveniencia))
-    mediana = sorted(alturas)[len(alturas) // 2] if alturas else 6000
-    parte = ir.Parte(id="M1", instrumento="Material espectral", clave="sol" if mediana >= 6000 else "fa",
-                     vozes=[ir.Voz(id="M1V1", eventos=eventos)])
-    return ir.MusicIR(titulo=titulo, compassos=[ir.Compasso(numerador=4, denominador=4, andamento=60 if n == 0 else None)
-                                                for n in range(compassos)], partes=[parte])
+    pasta = Path(tarefa.pasta)
+    if valores == [FALHOU]:
+        erro = pasta / "erro.txt"
+        detalhe = erro.read_text(encoding="utf-8", errors="replace")[:500] if erro.is_file() else "sem erro.txt"
+        raise ValueError(f"o patch falhou no OpenMusic: {detalhe.strip()}")
+    p = tarefa.patch
+    autor = {"esquisse": "OpenMusic/Esquisse", "chaos": "OpenMusic/Chaos", "situation": "OpenMusic/Situation",
+             "omchroma": "OpenMusic/OMChroma", "om-supervp": "OpenMusic/OM-SuperVP"}.get(p.biblioteca, "OpenMusic")
+    ctx = Contexto(parametros=tarefa.parametros, entrada=tarefa.entrada(), pasta=pasta, atual=atual, plano=plano,
+                   rng=rng or random.Random(0),
+                   proveniencia=ir.Proveniencia(origem="openmusic", autor=autor, operacao=operacao))
+    return p.ler(valores, ctx)
