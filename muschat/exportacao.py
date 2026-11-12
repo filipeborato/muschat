@@ -114,7 +114,7 @@ def dependencias() -> dict[str, str | None]:
         except PackageNotFoundError:
             return None
 
-    return {"python": platform.python_version(), **{p: v(p) for p in ("muschat", "abjad", "verovio", "google-genai")}}
+    return {"python": platform.python_version(), **{p: v(p) for p in ("abjad", "verovio", "google-genai")}}
 
 
 def experimento_json(c: Composicao, *, motores: dict[str, str] | None = None) -> str:
