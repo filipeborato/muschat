@@ -237,8 +237,11 @@ def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catal
                              f"OpenMusic (assistido). Baixe a tarefa {tarefa.id}, rode o patch e envie saida.txt. "
                              f"Escolha do motor: {' '.join(ctx.decisao.justificativa)}", None, tarefa)
         rng = random.Random(f"{ctx.semente}/{k}")  # uma semente por etapa: retomar depois de uma pausa reproduz
+        funcao = catalogo[etapa.procedimento].funcao
+        if funcao is None:
+            raise Recusa(f"{etapa.procedimento} não tem implementação Python")
         try:
-            nova = catalogo[etapa.procedimento].funcao(atual, alvo, ctx.parametros[k], rng)
+            nova = funcao(atual, alvo, ctx.parametros[k], rng)
         except ValueError as exc:  # inclui ValidationError
             raise Recusa(f"etapa {k + 1} ({etapa.procedimento}): {_primeira_linha(exc)}") from exc
         atual = _conferir(alvo, atual, nova, origem="algoritmo", operacao=ctx.operacao)
