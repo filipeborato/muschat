@@ -116,6 +116,12 @@ Maurice_Chamber`), the result comes back as MusicXML and becomes a Version (prov
 language is still useful for a lot of contemporary music, and the plan can chain the catalog transformations after
 it (transpose, density, register, dynamics, techniques...) to move the material elsewhere.
 
+The sidebar **NotaGen — modelo local** lets you enable it and configure the Python executable and repository
+directory for the current session. Installation status updates immediately. Select **NotaGen + Python** to require
+local model generation followed by Python transformations; a plan that omits NotaGen is rejected, not silently
+replaced with harmonic-series generation. CUDA is checked when generation runs. These UI settings are not saved
+to `.env`; use the environment configuration below for defaults across sessions.
+
 **Off by default.** Without it Muschat works exactly as before; with `MUSCHAT_NOTAGEN=1` but something missing, the
 sidebar (*Motores e bibliotecas*) says what is missing and the plan never offers it.
 

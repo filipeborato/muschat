@@ -431,7 +431,10 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
                  "Use somente procedimentos do catálogo acima, inclusive para técnicas. "
                  "OpenMusic é assistido: prepara uma tarefa para o compositor executar o patch; "
                  "não é um modelo de linguagem nem uma chamada automática ao aplicativo. "
-                 "Não invente operações para atender partes do pedido sem suporte."),
+                 "Não invente operações para atender partes do pedido sem suporte.") + (
+                 " Comece obrigatoriamente por gerar_notagen com uma condicao disponível, seguido das "
+                 "transformações Python solicitadas; não substitua por serie_harmonica."
+                 if modo == "notagen" else ""),
             temperature=0.2,
             response_mime_type="application/json",
             response_schema=Plano,
@@ -504,6 +507,9 @@ def _catalogo_no_prompt(catalogo: dict[str, Procedimento], registro: Registro, m
             continue
         proc = catalogo[nome]
         motores = registro.implementacoes(nome)
+        if modo == "notagen" and not any(m in motores and motores[m].estado != "indisponivel"
+                                         for m in ("notagen", "python")):
+            continue
         if modo in ("python", "openmusic") and (modo not in motores or motores[modo].estado == "indisponivel"):
             continue
         onde = " Também no OpenMusic (assistido: o compositor roda o patch)." if "openmusic" in motores else ""

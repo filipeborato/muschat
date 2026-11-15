@@ -104,6 +104,24 @@ def test_material_do_notagen_segue_para_as_transformacoes_do_python(tmp_path):
     assert r.versao.ir.partes[0].vozes[0].eventos[0].alturas[0].midicents == 6050
 
 
+def test_modo_notagen_exige_chamada_local_e_executa_transformacao(tmp_path):
+    reg = _registro(_instalacao(tmp_path))
+    fake = CompositorFake()
+    plano = _plano("gerar_notagen", parametros={"compassos": 2}, instrumentos=["violino", "violoncelo"])
+    plano["operacoes"][0]["condicao"] = CONDICOES[0]
+    plano["operacoes"].append({"procedimento": "transpor", "parametros": [{"nome": "intervalo", "valor": 50}]})
+    c = Composicao()
+    g = GeradorFake(plano)
+    r = compor("componha", c, gerador=g, chat=ChatFake(), modelo="m", modo="notagen", registro=reg, compositor=fake)
+    assert r.versao is not None, r.resumo
+    assert len(fake.chamadas) == 1
+    assert [e["motor"] for e in r.versao.experimento["etapas"]] == ["notagen", "python"]
+    assert "Comece obrigatoriamente por gerar_notagen" in g.chamadas[0].config.system_instruction
+    r = compor("componha", c, gerador=GeradorFake(_plano()), chat=ChatFake(), modelo="m", modo="notagen",
+               registro=reg, compositor=fake)
+    assert r.versao is None and "não chamou" in r.resumo and len(c.versoes) == 1
+
+
 def test_condicao_desconhecida_e_recusada_sem_rodar_o_modelo(tmp_path):
     fake = CompositorFake()
     _, r = _gerar(tmp_path, fake, condicao="Contemporary_Lachenmann_Chamber")

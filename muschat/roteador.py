@@ -18,11 +18,11 @@ from typing import Literal
 from pydantic import BaseModel
 
 from muschat.plano import Plano
-from muschat.registro import NOME_DO_MOTOR, PREFERENCIA, Motor, Registro
+from muschat.registro import NOME_DO_MOTOR, PREFERENCIA, Capacidade, Motor, Registro
 
-Modo = Literal["automatico", "python", "openmusic", "hibrido"]
+Modo = Literal["automatico", "python", "openmusic", "hibrido", "notagen"]
 MODOS: dict[Modo, str] = {"automatico": "Automático", "python": "Python/Abjad", "openmusic": "OpenMusic",
-                          "hibrido": "Híbrido"}
+                          "hibrido": "Híbrido", "notagen": "NotaGen + Python"}
 
 
 class Etapa(BaseModel):
@@ -53,6 +53,8 @@ def rotear(plano: Plano, modo: Modo, registro: Registro) -> Decisao:
         motor, linha = _escolher(op.procedimento, efetivo, registro)
         etapas.append(Etapa(motor=motor, procedimento=op.procedimento))
         linhas.append(linha)
+    if efetivo == "notagen" and not any(e.motor == "notagen" for e in etapas):
+        raise SemRota("o modo NotaGen precisa de gerar_notagen; o plano não chamou o modelo local")
     if efetivo == "hibrido" and not any(e.motor == "openmusic" for e in etapas):
         raise SemRota("o modo Híbrido precisa de uma etapa no OpenMusic, e nenhuma operação do plano roda no "
                       f"OpenMusic aqui. {_situacao_om(registro)} Alternativas: modo Automático ou Python/Abjad.")
@@ -61,7 +63,12 @@ def rotear(plano: Plano, modo: Modo, registro: Registro) -> Decisao:
 
 def _escolher(procedimento: str, modo: Modo, registro: Registro) -> tuple[Motor, str]:
     impl = registro.implementacoes(procedimento)  # R1 + R2: só o que existe e roda aqui
-    disponiveis = {m: c for m, c in impl.items() if c.estado != "indisponivel"}
+    disponiveis: dict[Motor, Capacidade] = {m: c for m, c in impl.items() if c.estado != "indisponivel"}
+    if modo == "notagen":
+        motor: Motor = "notagen" if procedimento == "gerar_notagen" else "python"
+        if motor not in disponiveis:
+            raise SemRota(f"{procedimento} não está disponível em {NOME_DO_MOTOR[motor]} neste modo")
+        return motor, f"{procedimento}: {NOME_DO_MOTOR[motor]}, modo NotaGen + Python."
     if modo in ("python", "openmusic"):  # R3
         if modo in disponiveis:
             return modo, f"{procedimento}: {MODOS[modo]}, como escolhido ({_estado(disponiveis[modo].estado)})."
@@ -74,12 +81,12 @@ def _escolher(procedimento: str, modo: Modo, registro: Registro) -> tuple[Motor,
                              f"({_estado(disponiveis['openmusic'].estado)}).")
     if modo == "hibrido" and "python" in disponiveis:
         return "python", f"{procedimento}: Python/Abjad, o OpenMusic não tem esse procedimento aqui (R4)."
-    automaticos = {m: c for m, c in disponiveis.items() if c.estado == "automatico"}
+    automaticos: dict[Motor, Capacidade] = {m: c for m, c in disponiveis.items() if c.estado == "automatico"}
     if not automaticos:
         raise SemRota("esta operação exige modo assistido explícito; selecione OpenMusic ou Híbrido.")
     # R5 e R6: menos intervenção manual; empate fica com o Python
     escolhido = min(automaticos, key=lambda m: (PREFERENCIA[disponiveis[m].estado], m != "python"))
-    outros = [m for m in disponiveis if m != escolhido]
+    outros: list[Motor] = [m for m in disponiveis if m != escolhido]
     if outros:
         o = outros[0]
         return escolhido, (f"{procedimento}: {NOME_DO_MOTOR[escolhido]} ({_estado(disponiveis[escolhido].estado)}). "

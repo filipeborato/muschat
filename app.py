@@ -16,7 +16,7 @@ from google.genai import types
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from muschat.composicao import Composicao
-from muschat.config import ChaveAusente, carregar_config
+from muschat.config import ChaveAusente, carregar_config, NOTAGEN_PYTHON_PADRAO, NOTAGEN_DIR_PADRAO
 from muschat.erros import mensagem_de_erro
 from muschat.exportacao import PERDAS, experimento_json, metricas, pacote, para_midi
 from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar, para_lilypond
@@ -97,17 +97,23 @@ def _lilypond(configurado: str | None) -> Lilypond | None:
     return detectar(configurado)
 
 
-@st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar os pesos aparece em até 5 min
+with st.sidebar.expander("NotaGen — modelo local"):
+    notagen_ativo = st.checkbox("Ativar NotaGen", value=cfg.notagen is not None, key="notagen_ativo")
+    notagen_python = st.text_input("Python do NotaGen", value=(cfg.notagen or (NOTAGEN_PYTHON_PADRAO, NOTAGEN_DIR_PADRAO))[0],
+                                  key="notagen_python")
+    notagen_pasta = st.text_input("Pasta do NotaGen", value=(cfg.notagen or (NOTAGEN_PYTHON_PADRAO, NOTAGEN_DIR_PADRAO))[1],
+                                 key="notagen_pasta")
+    st.caption("Configuração desta sessão. Requer pesos instalados e GPU CUDA. Cada geração carrega o modelo.")
+
+
 def _notagen() -> InstalacaoNotaGen | str | None:
-    """None = desligado (MUSCHAT_NOTAGEN); texto = ligado mas indisponível, pelo motivo."""
-    return detectar_notagen(*cfg.notagen) if cfg.notagen else None
+    return detectar_notagen(notagen_python, notagen_pasta) if notagen_ativo else None
 
 
 def _compositor() -> NotaGenLocal | None:
     return NotaGenLocal(n) if isinstance(n := _notagen(), InstalacaoNotaGen) else None
 
 
-@st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar algo aparece em até 5 min
 def _registro(openmusic_ativo: bool = cfg.openmusic_ativo) -> Registro:
     try:
         abjad_versao: str | None = version("abjad")
@@ -120,7 +126,9 @@ def _registro(openmusic_ativo: bool = cfg.openmusic_ativo) -> Registro:
 
 _ICONE = {"automatico": "🟢", "intercambio_arquivos": "🟡", "manual": "🟠", "indisponivel": "⚪"}
 
-modos = list(MODOS) if cfg.openmusic_ativo else ["automatico", "python"]
+modos = ["automatico", "python"] + (["openmusic", "hibrido"] if cfg.openmusic_ativo else [])
+if notagen_ativo:
+    modos.append("notagen")
 if st.session_state.get("modo") not in modos:
     st.session_state.modo = "automatico"
 st.sidebar.radio("Motor", modos, format_func=MODOS.__getitem__, key="modo", horizontal=True,
@@ -128,6 +136,17 @@ st.sidebar.radio("Motor", modos, format_func=MODOS.__getitem__, key="modo", hori
 if st.session_state.modo == "openmusic":
     st.sidebar.caption("OpenMusic assistido: o chat prepara uma tarefa para você executar o patch no OpenMusic "
                        "e importar a saída. Para combinar com procedimentos Python, selecione Híbrido.")
+elif st.session_state.modo == "notagen":
+    st.sidebar.caption("Este modo exige uma nova geração NotaGen seguida de transformações Python. "
+                       "Para editar sem regenerar, use Automático ou Python/Abjad.")
+if notagen_ativo:
+    instalacao = _notagen()
+    if isinstance(instalacao, InstalacaoNotaGen):
+        st.sidebar.success(f"NotaGen instalado: {len(instalacao.condicoes)} condições disponíveis.")
+        st.sidebar.caption("Selecione NotaGen + Python para exigir geração pelo modelo local. "
+                           "A disponibilidade CUDA é verificada na execução.")
+    else:
+        st.sidebar.error(str(instalacao))
 with st.sidebar.expander("Motores e bibliotecas"):
     for cap in _registro().capacidades:
         versao = f" {cap.versao}" if cap.versao else ""
