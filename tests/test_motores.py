@@ -167,6 +167,41 @@ def test_saida_valida_vira_versao_com_proveniencia_openmusic(tmp_path):
     assert alturas[:3] == [3600, 4800, 5500]  # 5502 aproximado ao quarto de tom
 
 
+def test_chat_importa_saida_pendente_sem_reinterpretar_como_hz(tmp_path):
+    from muschat.reasoning import responder
+    from tests.test_reasoning import FakeGerador, FakeChat, FakeRetriever
+    c, _, _ = _om(tmp_path)
+    log = []
+    g, chat, retriever = FakeGerador(log, RuntimeError("não chamar modelo")), FakeChat(log), FakeRetriever(log)
+    def enviar(texto):
+        return responder(texto, gerador=g, chat=chat, retriever=retriever, modelo="m", composicao=c)
+    espera = enviar("crie a composição")
+    assert "aguardando" in espera.final and not espera.partituras and c.pendente
+    invalida = enviar("3600 4800")
+    assert "recusada" in invalida.final and c.pendente and not c.versoes
+    pronta = enviar(SAIDA_16.strip("()"))
+    assert not c.pendente and len(c.versoes) == 1 and len(pronta.partituras) == 1
+    assert "midicents" in pronta.final and "não Hz" in pronta.final
+    assert log == []
+
+
+def test_criar_tarefa_no_chat_nao_inventa_composicao_concluida():
+    import json
+    from muschat.reasoning import responder
+    from tests.test_reasoning import ANALISE_OK, FakeChat, FakeRetriever
+    from tests.test_reasoning_notacao import GeradorSequencial
+    log = []
+    c = Composicao()
+    g = GeradorSequencial(log, json.dumps({**ANALISE_OK, "notacao": "compor"}), json.dumps(_plano()))
+    try:
+        r = responder("componha", gerador=g, chat=FakeChat(log), retriever=FakeRetriever(log), modelo="m",
+                      composicao=c, registro=COM_OM, modo="openmusic")
+        assert c.pendente and "ainda não foi concluída" in r.final
+        assert not r.partituras and "sintese" not in log
+    finally:
+        descartar(c)
+
+
 @pytest.mark.parametrize("saida,trecho", [
     ("(defun x () (shell \"rm\"))", "além de números"),
     ("3600,5 4800", "além de números"),

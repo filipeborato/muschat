@@ -1,6 +1,7 @@
 """Orquestração de um turno: análise (CoT) -> recuperação -> notação (sob demanda) -> síntese."""
 
 from collections.abc import Sequence
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -16,7 +17,7 @@ from muschat.notacao.lilypond import para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.tecnicas import TECNICAS
 from muschat.notagen import Compositor
-from muschat.orquestrador import compor
+from muschat.orquestrador import compor, retomar
 from muschat.registro import Registro
 from muschat.roteador import Modo
 from muschat.seguranca import neutralizar as _neutralizar
@@ -122,6 +123,23 @@ def responder(
     registro: Registro | None = None,
     compositor: Compositor | None = None,
 ) -> Resposta:
+    if composicao is not None and composicao.pendente is not None:
+        pendente = composicao.pendente
+        tarefa = pendente.tarefa
+        texto = pergunta.strip()
+        if re.match(r"^[\d(+\-.]", texto):
+            resultado = retomar(composicao, texto, compositor=compositor)
+            unidade = (" Os valores da série são midicents (3600 = Dó2, 6000 = Dó4), não Hz."
+                       if tarefa and tarefa.procedimento == "serie_harmonica" else "")
+            return Resposta(resultado.resumo + unidade, {}, [], False,
+                            [exemplo_da_versao(resultado.versao)] if resultado.versao else [])
+        formato = tarefa.patch.saida if tarefa else "saída numérica do patch"
+        return Resposta(
+            f"A composição está aguardando a saída da tarefa {tarefa.id if tarefa else ''}. "
+            f"Formato esperado: {formato}. Cole somente os números aqui no chat (com ou sem parênteses), "
+            "ou envie saida.txt no painel e clique em Importar e continuar. "
+            "Nenhuma composição nova foi gerada neste turno. Para mudar o pedido, descarte a tarefa no painel.",
+            {}, [], False)
     pergunta_segura = _neutralizar(pergunta)
 
     analise = _analisar(pergunta_segura, gerador=gerador, chat=chat, modelo=modelo)
@@ -136,6 +154,11 @@ def responder(
                            registro=registro, compositor=compositor)
         operacao = resultado.resumo
         partituras = [exemplo_da_versao(resultado.versao)] if resultado.versao else []
+        if resultado.tarefa is not None:
+            return Resposta(
+                resultado.resumo + f" Saída esperada: {resultado.tarefa.patch.saida}. "
+                "Execute o patch e cole somente os números aqui no chat, ou importe saida.txt pelo painel. "
+                "A composição ainda não foi concluída.", analise.model_dump(), trechos, False)
     else:
         partituras = _partituras(pergunta_segura, analise, trechos, gerador=gerador, chat=chat, modelo=modelo)
 

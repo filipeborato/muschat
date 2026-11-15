@@ -146,6 +146,7 @@ def _secao_pendente(c: Composicao):
         return
     with st.sidebar.container(border=True):
         st.warning(f"⏳ Aguardando você: etapa {p.etapa + 1} de {len(p.decisao.etapas)} no OpenMusic")
+        st.caption(f"Saída esperada: {p.tarefa.patch.saida}. Você também pode colar somente os números no chat.")
         for k, e in enumerate(p.decisao.etapas):
             estado = "feita" if k < p.etapa else "aguardando você" if k == p.etapa else "pendente"
             st.caption(f"{k + 1}. {e.procedimento} · {NOME_DO_MOTOR[e.motor]} · {estado}")
