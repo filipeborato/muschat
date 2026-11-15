@@ -11,11 +11,11 @@ from dataclasses import dataclass
 
 from muschat import musicir as ir
 from muschat.plano import Plano
-from muschat.procedimentos.espectrais import eventos_do_espectro
+from muschat.procedimentos.espectrais import espectralizar, eventos_do_espectro
 from muschat.procedimentos.geracao import distribuir, orquestrar_material, serie_harmonica
 from muschat.procedimentos.melodicos import intervalos, inverter, retrogradar, rotacionar, transpor
 from muschat.procedimentos.progressivos import (
-    aplicar_tecnicas, densidade, dinamica_progressiva, registro_progressivo,
+    aplicar_tecnicas, densidade, dinamica_progressiva, registro_progressivo, tecnicas_por_gesto,
 )
 from muschat.procedimentos.ritmicos import aumentacao_diminuicao, permutar_duracoes, subdividir
 
@@ -73,6 +73,21 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
         },
         orquestrar_material,
     ),
+    Procedimento(
+        "espectralizar",
+        "Troca as alturas da seleção (de qualquer material: NotaGen, partitura aberta, série harmônica) pelos "
+        "parciais de uma fundamental, preservando o contorno de cada voz (sobe onde subia, desce onde descia) e "
+        "dando a cada parte uma faixa do espectro, do agudo ao grave, na tessitura dela; o ritmo, as dinâmicas e "
+        "as técnicas ficam.",
+        {
+            "fundamental": Faixa(2400, 6000, 3600, "fundamental", unidade="midicents (3600 = Dó 2, 6000 = Dó 4)"),
+            "parciais": Faixa(2, 32, 16, "quantos parciais (1..n)"),
+            "microtom": Faixa(0, 2, 1, "aproximação: 0 semitom, 1 quarto de tom, 2 oitavo de tom"),
+            "salto_maximo": Faixa(100, 2400, 1200, "maior intervalo entre notas seguidas de uma voz",
+                                  unidade="cents"),
+        },
+        espectralizar,
+    ),
     Procedimento("transpor", "Transpõe as notas da seleção; o ritmo fica.",
                  {"intervalo": Faixa(-2400, 2400, 0, "intervalo (100 = semitom)", unidade="cents")}, transpor),
     Procedimento("inverter", "Inversão melódica em torno de um eixo, voz por voz; o ritmo fica.",
@@ -104,8 +119,15 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
                  registro_progressivo),
     Procedimento("dinamica_progressiva", f"Dinâmica {_RAMPA} (uma marca por compasso).",
                  {"inicial": Faixa(0, 9, 2, _NIVEIS), "final": Faixa(0, 9, 7, _NIVEIS)}, dinamica_progressiva),
+    Procedimento("tecnicas_por_gesto", "Aplica as técnicas listadas em tecnicas no plano (nomes do grimório) por "
+                 "gesto inteiro (notas entre pausas): cada gesto sorteado recebe uma técnica que se toca em todas as "
+                 "notas dele (instrumento, registro e duração); um rótulo no começo, ord. só na volta. Prefira este "
+                 "a aplicar_tecnicas.",
+                 {"proporcao": Faixa(0, 1, 0.5, "proporção dos gestos que recebem técnica", inteiro=False)},
+                 tecnicas_por_gesto),
     Procedimento("aplicar_tecnicas", "Aplica as técnicas listadas em tecnicas no plano (nomes do grimório, "
-                 "ex.: harmonico, sul ponticello, pizzicato, staccato) a uma proporção sorteada das notas da seleção.",
+                 "ex.: harmonico, sul ponticello, pizzicato, staccato) a uma proporção sorteada das notas da seleção, "
+                 "nota a nota (sem olhar o gesto nem o registro).",
                  {"proporcao": Faixa(0, 1, 1, "proporção das notas que recebem as técnicas", inteiro=False)},
                  aplicar_tecnicas),
     Procedimento("distribuir", "Distribui as notas de uma parte de origem entre as partes selecionadas, cada nota "

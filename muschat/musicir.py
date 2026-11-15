@@ -66,6 +66,17 @@ def ligam(e: Nota, seguinte: object) -> bool:
             and [a.midicents for a in seguinte.alturas] == [a.midicents for a in e.alturas])
 
 
+def gestos(eventos: list) -> list[list[Nota]]:
+    """Gestos (frases) de uma voz: notas seguidas, separadas por pausa ou pelo fim."""
+    saida: list[list[Nota]] = [[]]
+    for e in eventos:
+        if isinstance(e, Nota):
+            saida[-1].append(e)
+        elif saida[-1]:
+            saida.append([])
+    return [g for g in saida if g]
+
+
 class Pausa(_Evento):
     tipo: Literal["pausa"] = "pausa"
     dinamica: Dinamica | None = None

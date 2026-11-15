@@ -1,4 +1,5 @@
-"""Dado espectral (ex.: análise do OM-SuperVP) -> eventos instrumentais."""
+"""Material espectral: parciais de uma fundamental, dado espectral (ex.: análise do OM-SuperVP) -> eventos
+instrumentais, e alturas de uma composição trocadas por parciais preservando o contorno."""
 
 import math
 import random
@@ -7,7 +8,93 @@ from fractions import Fraction
 from muschat import musicir as ir
 from muschat.instrumentos import instrumento, no_registro
 from muschat.plano import Plano
-from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir, repartir
+from muschat.procedimentos.comum import QUARTETO, Grade, Ids, com_alturas, exigir, por_voz, repartir
+
+
+def parciais(fundamental: float, quantos: int, microtom: int) -> list[int]:
+    """Parciais 1..n da fundamental (midicents), aproximados ao semitom, quarto ou oitavo de tom (microtom 0, 1, 2)."""
+    passo = 100 // 2 ** microtom
+    return [round((fundamental + 1200 * math.log2(n)) / passo) * passo for n in range(1, quantos + 1)]
+
+
+def espectralizar(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:
+    """As alturas da seleção viram parciais da fundamental: cada parte recebe uma faixa do espectro (a de cima, os
+    parciais altos; a de baixo, os graves) dentro da sua tessitura, e cada voz mantém o contorno (sobe onde subia,
+    desce onde descia, repete onde repetia), com o salto limitado. Ritmo, pausas, dinâmicas e técnicas ficam."""
+    atual = exigir(atual)
+    reservatorio = sorted(set(parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))))
+    salto = int(p["salto_maximo"])
+    com_altura = [parte for parte in atual.partes if _tessitura(parte) is None or len(set(_tessitura(parte))) == 2]
+    faixas = {parte.id: _faixa(reservatorio, parte, k, len(com_altura)) for k, parte in enumerate(com_altura)}
+
+    def trecho(parte: ir.Parte, voz: ir.Voz, alvo: list[ir.Evento]) -> list[ir.Evento]:
+        notas = [e for e in alvo if isinstance(e, ir.Nota)]
+        if parte.id not in faixas or not notas:
+            return alvo
+        faixa, cabem = faixas[parte.id]
+        linha = _contorno([n.alturas[0].midicents for n in notas], faixa, cabem, salto)
+        novas = {n.id: com_alturas(n, _acorde(n, alto, cabem)) for n, alto in zip(notas, linha)}
+        return [novas.get(e.id, e) for e in alvo]
+
+    return por_voz(atual, plano.selecao, trecho)
+
+
+def _tessitura(parte: ir.Parte) -> tuple[int, int] | None:
+    if parte.tessitura:
+        return parte.tessitura
+    try:
+        return instrumento(parte.instrumento).tessitura
+    except ValueError:  # instrumento fora da tabela (ex.: nome em inglês de um MusicXML): sem limite conhecido
+        return None
+
+
+def _faixa(reservatorio: list[int], parte: ir.Parte, k: int, n: int) -> tuple[list[int], list[int]]:
+    """(faixa planejada da parte k de n, do agudo ao grave; parciais que cabem na tessitura). As faixas se
+    sobrepõem pela metade, para as vozes vizinhas conversarem."""
+    tessitura = _tessitura(parte)
+    cabem = [a for a in reservatorio if tessitura is None or tessitura[0] <= a <= tessitura[1]]
+    if not cabem:
+        raise ValueError(f"nenhum parcial cabe na tessitura de {parte.instrumento} ({parte.id}); mude a fundamental "
+                         "ou o número de parciais")
+    ultimo = max(len(reservatorio) - 1, 1)
+    baixo, alto = (n - 1 - k) / (n + 1), (n - k + 1) / (n + 1)
+    faixa = [a for a in cabem if baixo <= reservatorio.index(a) / ultimo <= alto]
+    if len(faixa) < 3:  # faixa estreita demais: os parciais que cabem mais perto do centro dela
+        centro = (baixo + alto) / 2 * ultimo
+        faixa = sorted(sorted(cabem, key=lambda a: abs(reservatorio.index(a) - centro))[:3])
+    return faixa, cabem
+
+
+def _contorno(original: list[int], faixa: list[int], cabem: list[int], salto: int) -> list[int]:
+    """Nova linha na faixa com as mesmas direções da original; o tamanho de cada passo segue o original até o
+    salto máximo. Sem parcial na direção dentro do salto, a nota repete (nunca inverte a direção)."""
+    menor, maior = min(original), max(original)
+    posicao = (original[0] - menor) / (maior - menor) if maior > menor else 0.5
+    linha = [faixa[round(posicao * (len(faixa) - 1))]]
+    for antes, depois in zip(original, original[1:]):
+        atual, passo = linha[-1], depois - antes
+        if passo == 0:
+            linha.append(atual)
+            continue
+        alvo = min(abs(passo), salto)
+        for pool in (faixa, cabem):  # primeiro dentro da faixa planejada, depois em toda a tessitura
+            opcoes = [a for a in pool if (a - atual) * passo > 0 and abs(a - atual) <= salto]
+            if opcoes:
+                linha.append(min(opcoes, key=lambda a: (abs(abs(a - atual) - alvo), abs(a - atual))))
+                break
+        else:
+            linha.append(atual)
+    return linha
+
+
+def _acorde(nota: ir.Nota, alto: int, cabem: list[int]) -> list[int]:
+    """A primeira altura vira `alto`; as outras do acorde, os parciais mais perto dos mesmos intervalos."""
+    base = nota.alturas[0].midicents
+    alturas = [alto]
+    for a in nota.alturas[1:]:
+        livres = [c for c in cabem if c not in alturas] or cabem
+        alturas.append(min(livres, key=lambda c: abs(c - (alto + a.midicents - base))))
+    return alturas
 
 
 def eventos_do_espectro(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],

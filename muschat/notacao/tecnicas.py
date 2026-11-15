@@ -1,9 +1,12 @@
 """Tabela única de técnicas estendidas (vocabulário do grimório), compartilhada por todos os adaptadores."""
 
 import unicodedata
+from bisect import bisect_right
 from dataclasses import dataclass
+from fractions import Fraction
 
 from muschat.instrumentos import FAMILIAS, INSTRUMENTOS, Familia, identificar
+from muschat.musicir import MusicIR, Nota
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,11 @@ class Tecnica:
     articulacao: str | None = None  # nome MusicXML (<articulations>)
     familias: frozenset[Familia] = frozenset(FAMILIAS)  # onde a técnica se toca; padrão: qualquer instrumento
     so: frozenset[str] = frozenset()  # quando só alguns instrumentos da família tocam (chaves de INSTRUMENTOS)
+    # idiomatismo (tabela inicial, a revisar com o compositor): registro como fração da tessitura do instrumento
+    # (0 = nota mais grave, 1 = mais aguda), duração mínima que soa, e se a técnica sustenta altura precisa
+    registro: tuple[float, float] = (0.0, 1.0)
+    duracao_minima: Fraction = Fraction(0)
+    altura_precisa: bool = True
 
 
 def _em(*familias: Familia) -> frozenset[Familia]:
@@ -22,6 +30,7 @@ def _em(*familias: Familia) -> frozenset[Familia]:
 
 
 _CORDAS, _SOPROS, _METAIS, _MADEIRAS = _em("cordas"), _em("madeiras", "metais"), _em("metais"), _em("madeiras")
+_COLCHEIA, _SEMINIMA = Fraction(1, 8), Fraction(1, 4)
 _PERCUSSAO, _TECLADO, _HARPA, _VIOLAO, _VOZ = _em("percussao"), _em("teclado"), _em("harpa"), _em("violao"), _em("voz")
 _RESSOA = _em("percussao", "harpa", "teclado", "violao")
 _FLAUTAS = frozenset({"piccolo", "flauta", "flauta contralto", "flauta baixo"})
@@ -45,31 +54,36 @@ TECNICAS = {
     "pizzicato": Tecnica("pizz.", familias=_CORDAS),
     "pizz. bartok": Tecnica(technical="snap-pizzicato", familias=_CORDAS | _VIOLAO),
     "pizzicato de mao esquerda": Tecnica(technical="stopped", familias=_CORDAS),
-    "jete": Tecnica("jeté", familias=_CORDAS),
-    "ricochet": Tecnica("ricochet", familias=_CORDAS),
+    "jete": Tecnica("jeté", familias=_CORDAS, duracao_minima=_COLCHEIA),
+    "ricochet": Tecnica("ricochet", familias=_CORDAS, duracao_minima=_COLCHEIA),
     "con sordino": Tecnica("con sord.", familias=_CORDAS | _METAIS),
     "senza sordino": Tecnica("senza sord.", familias=_CORDAS | _METAIS),
     "molto vibrato": Tecnica("molto vib.", familias=_CORDAS | _SOPROS | _VOZ),
     "senza vibrato": Tecnica("senza vib.", familias=_CORDAS | _SOPROS | _VOZ),
     "percussao no corpo": Tecnica("percuss. corpo", "x", familias=_CORDAS | _VIOLAO),
-    "harmonico": Tecnica(notehead="diamond", familias=_em("cordas", "madeiras", "metais", "harpa", "violao")),  # grimório: losango, sem o círculo
+    "harmonico": Tecnica(notehead="diamond", familias=_em("cordas", "madeiras", "metais", "harpa", "violao"),
+                         registro=(0.2, 1.0)),  # grimório: losango, sem o círculo
     # madeiras e metais
-    "fischio": Tecnica("fischio", "diamond", familias=_MADEIRAS, so=_FLAUTAS),
-    "whistle tone": Tecnica("whistle tone", "diamond", familias=_MADEIRAS, so=_FLAUTAS),
-    "jet whistle": Tecnica("jet wh.", familias=_MADEIRAS, so=_FLAUTAS),
-    "tongue ram": Tecnica("tongue ram", "triangle", familias=_MADEIRAS, so=_FLAUTAS),
-    "frullato": Tecnica("flz.", tremolo=True, familias=_SOPROS | _VOZ),
-    "multifonico": Tecnica("multif.", familias=_SOPROS | _VOZ),
-    "slap": Tecnica("slap", "x", familias=_SOPROS),
+    "fischio": Tecnica("fischio", "diamond", familias=_MADEIRAS, so=_FLAUTAS, registro=(0.35, 1.0),
+                       duracao_minima=_SEMINIMA),
+    "whistle tone": Tecnica("whistle tone", "diamond", familias=_MADEIRAS, so=_FLAUTAS, registro=(0.35, 1.0),
+                            duracao_minima=_SEMINIMA),
+    "jet whistle": Tecnica("jet wh.", familias=_MADEIRAS, so=_FLAUTAS, duracao_minima=_COLCHEIA,
+                           altura_precisa=False),
+    "tongue ram": Tecnica("tongue ram", "triangle", familias=_MADEIRAS, so=_FLAUTAS, registro=(0.0, 0.4)),
+    "frullato": Tecnica("flz.", tremolo=True, familias=_SOPROS | _VOZ, registro=(0.0, 0.9),
+                        duracao_minima=Fraction(1, 16)),
+    "multifonico": Tecnica("multif.", familias=_SOPROS | _VOZ, registro=(0.0, 0.7), duracao_minima=_COLCHEIA),
+    "slap": Tecnica("slap", "x", familias=_SOPROS, registro=(0.0, 0.55)),
     "key click": Tecnica("key click", "x", familias=_MADEIRAS),
-    "aria": Tecnica("aria", "circle-x", familias=_SOPROS | _VOZ),
+    "aria": Tecnica("aria", "circle-x", familias=_SOPROS | _VOZ, duracao_minima=_COLCHEIA),
     "bisbigliando": Tecnica("bisb.", familias=_MADEIRAS | _HARPA),
     "canta e suona": Tecnica("canta e suona", familias=_SOPROS),
-    "subtone": Tecnica("subtone", familias=_MADEIRAS, so=_PALHETA_SIMPLES),
+    "subtone": Tecnica("subtone", familias=_MADEIRAS, so=_PALHETA_SIMPLES, registro=(0.0, 0.5)),
     "growl": Tecnica("growl", familias=_SOPROS),
     "pizzicato de lingua": Tecnica("t. pizz.", familias=_MADEIRAS),
     # metais
-    "gestopft": Tecnica("gestopft", technical="stopped", familias=_METAIS),
+    "gestopft": Tecnica("gestopft", technical="stopped", familias=_METAIS, registro=(0.2, 0.9)),
     "aberto": Tecnica(technical="open", familias=_METAIS),
     "cuivre": Tecnica("cuivré", familias=_METAIS),
     "surdina harmon": Tecnica("harmon mute", familias=_METAIS),
@@ -116,7 +130,7 @@ TECNICAS = {
     "vocal fry": Tecnica("vocal fry", familias=_VOZ),
     "estalo de lingua": Tecnica("tongue click", "x", familias=_VOZ | _MADEIRAS),
     # qualquer instrumento
-    "tremolo": Tecnica(tremolo=True),
+    "tremolo": Tecnica(tremolo=True, duracao_minima=_COLCHEIA),
     "staccato": Tecnica(articulacao="staccato"),
     "staccatissimo": Tecnica(articulacao="staccatissimo"),
     "tenuto": Tecnica(articulacao="tenuto"),
@@ -176,6 +190,36 @@ def cabe(nome_tecnica: str, nome_instrumento: str) -> bool:
     except ValueError:
         return True
     return INSTRUMENTOS[chave].familia in t.familias and (not t.so or chave in t.so)
+
+
+def problema(nome_tecnica: str, nome_instrumento: str, nota: Nota) -> str | None:
+    """Por que a técnica não se toca nesta nota deste instrumento (família, registro, duração, altura), ou None."""
+    if not cabe(nome_tecnica, nome_instrumento):
+        return "não se toca nesta família"
+    t = tecnica(nome_tecnica)
+    if nota.duracao < t.duracao_minima:
+        return f"curta demais (mínimo {t.duracao_minima})"
+    if not t.altura_precisa and any(a.midicents % 100 for a in nota.alturas):
+        return "não tem altura precisa (escrita microtonal)"
+    try:
+        grave, agudo = INSTRUMENTOS[identificar(nome_instrumento)].tessitura
+    except ValueError:
+        return None  # instrumento fora da tabela: registro não conferível
+    if agudo > grave:
+        posicoes = [(a.midicents - grave) / (agudo - grave) for a in nota.alturas]
+        if max(posicoes) > t.registro[1]:
+            return "fora do registro (agudo demais)"
+        if min(posicoes) < t.registro[0]:
+            return "fora do registro (grave demais)"
+    return None
+
+
+def tecnicas_intocaveis(ir: MusicIR) -> list[str]:
+    """Verificador: toda técnica que não se toca onde está, vinda de qualquer motor ("P2 c.3: slap (...): motivo")."""
+    inicios = ir.inicios()
+    return [f"{p.id} c.{bisect_right(inicios, e.inicio)}: {t} ({p.instrumento}): {motivo}"
+            for p, _, e in ir.eventos() if isinstance(e, Nota)
+            for t in e.tecnicas if (motivo := problema(t, p.instrumento, e))]
 
 
 def tecnica(nome: str) -> Tecnica:

@@ -1,6 +1,5 @@
 """Procedimentos que criam material: série harmônica, orquestração de um material e distribuição."""
 
-import math
 import random
 from fractions import Fraction
 
@@ -8,15 +7,15 @@ from muschat import musicir as ir
 from muschat.plano import Plano
 from muschat.instrumentos import instrumento, no_registro
 from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir
+from muschat.procedimentos.espectrais import parciais
 
 _DURACOES_SORTEADAS = [Fraction(1, 2), Fraction(3, 8), Fraction(1, 4), Fraction(1, 8)]
 
 
 def serie_harmonica(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:
     """Parciais 1..n da fundamental, aproximados, distribuídos por tessitura; ritmo sorteado em 4/4."""
-    passo = 100 // 2 ** int(p["microtom"])
-    parciais = [round((p["fundamental"] + 1200 * math.log2(n)) / passo) * passo for n in range(1, int(p["parciais"]) + 1)]
-    return _orquestrar(parciais, plano, p, rng, f"Série harmônica sobre {p['fundamental']:.0f} mc")
+    reservatorio = parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))
+    return _orquestrar(reservatorio, plano, p, rng, f"Série harmônica sobre {p['fundamental']:.0f} mc")
 
 
 def orquestrar_material(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],

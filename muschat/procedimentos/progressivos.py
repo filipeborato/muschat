@@ -5,7 +5,7 @@ from collections.abc import Callable
 from fractions import Fraction
 
 from muschat import musicir as ir
-from muschat.notacao.tecnicas import cabe
+from muschat.notacao.tecnicas import cabe, problema
 from muschat.plano import Plano, Selecao
 from muschat.procedimentos.comum import (
     DINAMICAS, Grade, Ids, com_alturas, exigir, interpolar, pausa, por_compasso, por_voz,
@@ -102,6 +102,33 @@ def dinamica_progressiva(atual: ir.MusicIR | None, plano: Plano, p: dict[str, fl
                 if isinstance(e, (ir.Nota, ir.Pausa)) else e for e in grupo]
 
     return por_compasso(atual, plano.selecao, compasso)
+
+
+def tecnicas_por_gesto(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],
+                       rng: random.Random) -> ir.MusicIR:
+    """Uma técnica do plano por gesto inteiro (notas entre pausas), sorteada só entre as que se tocam em todas as
+    notas do gesto (família, registro, duração); gesto onde nenhuma se toca fica ordinario. A notação põe um rótulo
+    no começo do trecho e "ord." só na volta."""
+    if not plano.tecnicas:
+        raise ValueError("tecnicas_por_gesto precisa de técnicas no plano (campo tecnicas)")
+    atual = exigir(atual)
+    tocaveis = 0
+
+    def trecho(parte: ir.Parte, voz: ir.Voz, alvo: list[ir.Evento]) -> list[ir.Evento]:
+        nonlocal tocaveis
+        novas: dict[str, ir.Nota] = {}
+        for gesto in ir.gestos(alvo):
+            possiveis = [t for t in plano.tecnicas if all(problema(t, parte.instrumento, n) is None for n in gesto)]
+            tocaveis += bool(possiveis)
+            if possiveis and rng.random() < p["proporcao"]:
+                escolhida = rng.choice(possiveis)
+                novas |= {n.id: n.model_copy(update={"tecnicas": [escolhida]}) for n in gesto}
+        return [novas.get(e.id, e) for e in alvo]
+
+    novo = por_voz(atual, plano.selecao, trecho)
+    if not tocaveis:
+        raise ValueError(f"nenhum gesto da seleção comporta {plano.tecnicas} (instrumento, registro ou duração)")
+    return novo
 
 
 def aplicar_tecnicas(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:

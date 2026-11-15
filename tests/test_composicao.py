@@ -287,3 +287,12 @@ def test_restricao_que_cita_parte_inexistente_e_recusada():
     plano["restricoes"] = [{"tipo": "intervalo_proibido", "valor": 100, "partes": ["violoncelo"]}]
     r = _compor(c, plano)
     assert r.versao is None and "violoncelo" in r.resumo and len(c.versoes) == 1
+
+
+def test_tecnica_intocavel_aparece_nas_violacoes_do_resumo():
+    plano = _plano(instrumentos=["flauta", "clarinete baixo"])
+    plano["tecnicas"] = ["slap"]
+    plano["operacoes"].append({"procedimento": "aplicar_tecnicas", "parametros": [{"nome": "proporcao", "valor": 1}]})
+    r = _compor(Composicao(), plano)
+    assert "técnica intocável" in r.resumo and "slap" in r.resumo and "agudo demais" in r.resumo
+    assert any(v.startswith("técnica intocável") for v in r.versao.experimento["violacoes"])

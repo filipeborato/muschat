@@ -1,9 +1,10 @@
+import math
 import random
 from fractions import Fraction as F
 
 import pytest
 
-from muschat.musicir import Nota, Pausa, localizar
+from muschat.musicir import Nota, Pausa, gestos, localizar
 from muschat.notacao.musicxml import para_musicxml
 from muschat.plano import Plano, Selecao
 from muschat.procedimentos import CATALOGO
@@ -222,3 +223,78 @@ def test_aplicar_tecnicas_sorteia_uma_tecnica_por_nota(quarteto):
     novo = CATALOGO["aplicar_tecnicas"].funcao(quarteto, plano, {"proporcao": 1}, random.Random(3))
     usadas = [e.tecnicas for e in _notas(novo)]
     assert all(len(t) == 1 for t in usadas) and len({t[0] for t in usadas}) == 3
+
+
+# --- espectralizar (ticket 05 da composição musical) -------------------------------------------------------------------
+
+def _sinais(seq):
+    return [(b > a) - (b < a) for a, b in zip(seq, seq[1:])]
+
+
+def _melodias(ir):
+    return {(p.id, v.id): [e.alturas[0].midicents for e in v.eventos if isinstance(e, Nota)]
+            for p in ir.partes for v in p.vozes}
+
+
+def test_espectralizar_usa_so_parciais_preserva_contorno_e_limita_o_salto(quarteto):
+    novo = _rodar("espectralizar", quarteto, fundamental=3600, parciais=16, microtom=1, salto_maximo=1200)
+    parciais = {round((3600 + 1200 * math.log2(n)) / 50) * 50 for n in range(1, 17)}
+    assert {a for alturas in _alturas(novo) for a in alturas} <= parciais
+    antes, depois = _melodias(quarteto), _melodias(novo)
+    iguais = invertidos = 0
+    for chave, seq in depois.items():
+        for s0, s1 in zip(_sinais(antes[chave]), _sinais(seq)):
+            iguais += s0 == s1
+            invertidos += s0 * s1 < 0  # subir onde descia: nunca
+        assert all(abs(b - a) <= 1200 for a, b in zip(seq, seq[1:]))
+    assert invertidos == 0 and iguais >= 0.8 * sum(len(s) - 1 for s in depois.values())
+    for p in novo.partes:
+        assert all(p.tessitura[0] <= a <= p.tessitura[1] for alturas in _alturas(novo, p.id) for a in alturas)
+    assert _ritmo(novo) == _ritmo(quarteto)
+
+
+def test_espectralizar_planeja_registro_do_agudo_ao_grave_e_respeita_a_selecao(quarteto):
+    novo = _rodar("espectralizar", quarteto)
+    media = {p.id: sum(a for al in _alturas(novo, p.id) for a in al) / len(_alturas(novo, p.id)) for p in novo.partes}
+    assert media["P1"] > media["P3"] > media["P4"] and media["P2"] > media["P4"]
+    so_p2 = _rodar("espectralizar", quarteto, selecao=Selecao(partes=["P2"]))
+    assert _alturas(so_p2, "P1") == _alturas(quarteto, "P1") and _alturas(so_p2, "P2") != _alturas(quarteto, "P2")
+
+
+# --- técnica idiomática por gesto (ticket 06) --------------------------------------------------------------------------
+
+def _por_gesto(ir, tecnicas, selecao=None, semente=1, **params):
+    plano = Plano(objetivo="t", operacoes=[{"procedimento": "tecnicas_por_gesto"}], tecnicas=tecnicas,
+                  selecao=selecao or Selecao())
+    completos = {k: params.get(k, f.padrao) for k, f in CATALOGO["tecnicas_por_gesto"].parametros.items()}
+    novo = CATALOGO["tecnicas_por_gesto"].funcao(ir, plano, completos, random.Random(semente))
+    return novo, para_musicxml(novo)
+
+
+def test_tecnica_vale_para_o_gesto_inteiro_e_so_onde_se_toca(quarteto):
+    novo, xml = _por_gesto(quarteto, ["sul ponticello", "harmonico"], proporcao=1)
+    com_tecnica = 0
+    for p in novo.partes:
+        for gesto in gestos(p.vozes[0].eventos):
+            tecnicas = {tuple(n.tecnicas) for n in gesto}
+            assert len(tecnicas) == 1  # o gesto inteiro com a mesma técnica (ou nenhuma)
+            com_tecnica += tecnicas != {()}
+    assert com_tecnica and xml.count(">sul pont.<") <= com_tecnica
+    from muschat.exportacao import metricas
+    assert metricas(novo)["tecnicas_intocaveis"] == []
+    assert _por_gesto(quarteto, ["sul ponticello"], semente=4)[0] == _por_gesto(quarteto, ["sul ponticello"],
+                                                                                   semente=4)[0]
+    so_p3 = _por_gesto(quarteto, ["sul ponticello"], selecao=Selecao(partes=["P3"]), proporcao=1)[0]
+    assert all(n.tecnicas == [] for n in _notas(so_p3, "P1")) and any(n.tecnicas for n in _notas(so_p3, "P3"))
+
+
+def test_rotulo_no_comeco_do_gesto_e_ord_so_na_volta(quarteto):
+    novo, xml = _por_gesto(quarteto, ["sul ponticello"], proporcao=1, semente=2)
+    marcados = [g for p in novo.partes for g in gestos(p.vozes[0].eventos) if g[0].tecnicas]
+    assert xml.count(">sul pont.<") <= len(marcados)  # um rótulo por trecho, não por nota
+    assert xml.count(">sul pont.<") < sum(len(g) for g in marcados)
+
+
+def test_tecnica_que_nao_se_toca_em_nenhum_gesto_e_recusada(quarteto):
+    with pytest.raises(ValueError, match="nenhum gesto"):
+        _por_gesto(quarteto, ["whistle tone"])  # só flautas

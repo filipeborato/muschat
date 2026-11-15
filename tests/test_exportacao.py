@@ -93,9 +93,9 @@ def test_metricas_de_linha_cruzamento_frase_e_tecnica():
     assert m["cruzamentos"] == 1  # Ré4 da flauta contra o Fá4 do violoncelo
     # frases separadas por pausa: fl = 3 ataques em 3 semínimas, depois 2 em 4; vc = 2 em 4
     assert m["densidade_por_frase"] == {"fl": [1.0, 0.5], "vc": [0.5]}
-    assert m["tecnicas_incabiveis"] == []  # slap e jet whistle se tocam na flauta
+    assert m["tecnicas_intocaveis"] == []  # slap no grave e jet whistle de mínima se tocam na flauta
     cello.vozes[0].eventos[1].tecnicas = ["slap"]
-    assert metricas(ir)["tecnicas_incabiveis"] == ["vc c.2: slap (Violoncelo)"]
+    assert metricas(ir)["tecnicas_intocaveis"] == ["vc c.2: slap (Violoncelo): não se toca nesta família"]
 
 
 def test_metricas_com_versao_anterior_e_restricoes():
@@ -151,3 +151,16 @@ def test_midi_soma_notas_ligadas_num_so_ataque():
                  partes=[Parte(id="p", instrumento="Flauta", vozes=[voz])])
     tpq, (faixa,) = _ler_midi(para_midi(ir))
     assert faixa == [(0, 60, int(F(3, 2) * 4 * tpq)), (int(F(3, 2) * 4 * tpq), 62, 2 * tpq)]
+
+
+def test_tecnica_fora_do_registro_curta_demais_ou_sem_altura_precisa_e_apontada():
+    clarone = _melodia("cb", "Clarinete baixo", [(7400, F(1, 4), ["slap"]), (4000, F(1, 4), ["slap"]),
+                                                 (6000, F(1, 2), ["multifonico"])])
+    flauta = _melodia("fl", "Flauta", [(8000, F(1, 8), ["whistle tone"]), (7250, F(1, 8), ["jet whistle"]),
+                                       (8000, F(3, 4), ["whistle tone"])])
+    ir = MusicIR(titulo="t", compassos=[Compasso(numerador=4, denominador=4)], partes=[flauta, clarone])
+    assert metricas(ir)["tecnicas_intocaveis"] == [
+        "fl c.1: whistle tone (Flauta): curta demais (mínimo 1/4)",
+        "fl c.1: jet whistle (Flauta): não tem altura precisa (escrita microtonal)",
+        "cb c.1: slap (Clarinete baixo): fora do registro (agudo demais)",
+    ]

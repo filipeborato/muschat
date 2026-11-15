@@ -6,15 +6,14 @@ import json
 import re
 import struct
 import zipfile
-from bisect import bisect_right
 from collections import Counter
 from statistics import pstdev
 
 from muschat.composicao import Composicao
-from muschat.musicir import MusicIR, Nota, comparar, ligam
+from muschat.musicir import MusicIR, Nota, comparar, gestos, ligam
 from muschat.notacao.lilypond import Gravacao
 from muschat.notacao.musicxml import para_musicxml
-from muschat.notacao.tecnicas import cabe
+from muschat.notacao.tecnicas import tecnicas_intocaveis
 
 TPQ = 480  # ticks por semínima
 _CANAIS = [c for c in range(16) if c != 9]  # canal 10 é percussão no General MIDI
@@ -115,9 +114,7 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
         "saltos_acima_da_oitava": dict(saltos_oitava),
         "cruzamentos": _cruzamentos(ir),
         "densidade_por_frase": frases,
-        "tecnicas_incabiveis": [f"{p.id} c.{_compasso(ir, e.inicio)}: {t} ({p.instrumento})"
-                                for p, _, e in ir.eventos() if isinstance(e, Nota)
-                                for t in e.tecnicas if not cabe(t, p.instrumento)],
+        "tecnicas_intocaveis": tecnicas_intocaveis(ir),
     }
     if violacoes is not None:
         m["violacoes"] = len(violacoes)
@@ -128,16 +125,8 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
 
 
 def _densidade_por_frase(eventos: list) -> list[float]:
-    """Ataques por semínima de cada frase da voz; frase = notas seguidas, separadas por pausa (ou fim da voz)."""
-    densidades, frase = [], []
-    for e in [*eventos, None]:
-        if isinstance(e, Nota):
-            frase.append(e)
-        elif frase:
-            seminimas = (frase[-1].fim - frase[0].inicio) * 4
-            densidades.append(round(float(len(frase) / seminimas), 2))
-            frase = []
-    return densidades
+    """Ataques por semínima de cada frase (gesto) da voz."""
+    return [round(float(len(g) / ((g[-1].fim - g[0].inicio) * 4)), 2) for g in gestos(eventos)]
 
 
 # shortcut: compara todo par de notas de partes vizinhas, O(n²); varrer por tempo se peças longas pesarem
@@ -150,10 +139,6 @@ def _cruzamentos(ir: MusicIR) -> int:
                for a in notas(cima) for b in notas(baixo)
                if a.inicio < b.fim and b.inicio < a.fim
                and min(x.midicents for x in a.alturas) < max(x.midicents for x in b.alturas))
-
-
-def _compasso(ir: MusicIR, inicio) -> int:
-    return bisect_right(ir.inicios(), inicio)
 
 
 def experimento_json(c: Composicao, *, motores: dict[str, str] | None = None) -> str:

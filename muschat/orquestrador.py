@@ -23,7 +23,7 @@ from muschat.instrumentos import FAMILIAS, INSTRUMENTOS, instrumento
 from muschat.musicir import MusicIR, Origem, Parte, Proveniencia, comparar, localizar
 from muschat.notagen import Compositor
 from muschat.notacao.musicxml import de_musicxml, para_musicxml
-from muschat.notacao.tecnicas import tecnicas_da_familia
+from muschat.notacao.tecnicas import tecnicas_da_familia, tecnicas_intocaveis
 from muschat.openmusic import PASTA_TAREFAS, Tarefa, criar_tarefa, importar
 from muschat.plano import Operacao, Parametro, Plano
 from muschat.procedimentos import CATALOGO, Procedimento
@@ -223,6 +223,7 @@ def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catal
 
 def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dict[str, Procedimento]) -> Resultado:
     violacoes = [str(v) for v in verificar(nova, ctx.plano.restricoes)]
+    violacoes += [f"técnica intocável: {t}" for t in tecnicas_intocaveis(nova)]
     passos = ", ".join(f"{e.procedimento}[{NOME_DO_MOTOR[e.motor]}]({_texto(p, catalogo[e.procedimento])})"
                        for e, p in zip(ctx.decisao.etapas, ctx.parametros))
     plano = ctx.plano
