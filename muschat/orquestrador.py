@@ -66,7 +66,7 @@ def compor(
     atual = composicao.atual.ir if composicao.atual else None
     try:
         plano = _planejar(pedido, atual, gerador=gerador, chat=chat, modelo=modelo, catalogo=catalogo,
-                          registro=registro, secoes=(composicao.atual.experimento.get("plano", {}).get("secoes", [])
+                          registro=registro, modo=modo, secoes=(composicao.atual.experimento.get("plano", {}).get("secoes", [])
                                                    if composicao.atual else []))
     except Recusa as exc:
         return _recusa(exc)
@@ -391,7 +391,8 @@ def _primeira_linha(exc: Exception) -> str:
 
 
 def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "SessaoChat", modelo: str,
-              catalogo: dict[str, Procedimento], registro: Registro, secoes: list | None = None) -> Plano:
+              catalogo: dict[str, Procedimento], registro: Registro, modo: Modo = "automatico",
+              secoes: list | None = None) -> Plano:
     texto = (f"<pergunta_usuario>\n{neutralizar(pedido)}\n</pergunta_usuario>\n"
              f"<secoes>{neutralizar(str(secoes or []))}</secoes>\n"
              f"<composicao_atual>\n{resumir(atual)}\n</composicao_atual>")
@@ -400,11 +401,15 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         contents=[*chat.get_history(), types.Content(role="user", parts=[types.Part(text=texto)])],
         config=types.GenerateContentConfig(
             system_instruction=prompts.PLANO.format(
-                catalogo=_catalogo_no_prompt(catalogo, registro),
+                catalogo=_catalogo_no_prompt(catalogo, registro, modo),
                 instrumentos="; ".join(f"{f}: {', '.join(n for n, i in INSTRUMENTOS.items() if i.familia == f)}"
                                        for f in FAMILIAS),
                 tecnicas="; ".join(f"{f}: {', '.join(tecnicas_da_familia(f))}" for f in FAMILIAS),
-            ),
+            ) + (f"\nMotor selecionado na interface: {modo}. Esta escolha tem prioridade. "
+                 "Use somente procedimentos do catálogo acima, inclusive para técnicas. "
+                 "OpenMusic é assistido: prepara uma tarefa para o compositor executar o patch; "
+                 "não é um modelo de linguagem nem uma chamada automática ao aplicativo. "
+                 "Não invente operações para atender partes do pedido sem suporte."),
             temperature=0.2,
             response_mime_type="application/json",
             response_schema=Plano,
@@ -469,7 +474,7 @@ def resumir(ir: MusicIR | None) -> str:
     return neutralizar("\n".join(linhas))
 
 
-def _catalogo_no_prompt(catalogo: dict[str, Procedimento], registro: Registro) -> str:
+def _catalogo_no_prompt(catalogo: dict[str, Procedimento], registro: Registro, modo: Modo = "automatico") -> str:
     """Só o que o Registro diz que roda nesta máquina (nada planejado ou não instalado entra no prompt)."""
     linhas = []
     for nome in registro.disponiveis():
@@ -477,6 +482,8 @@ def _catalogo_no_prompt(catalogo: dict[str, Procedimento], registro: Registro) -
             continue
         proc = catalogo[nome]
         motores = registro.implementacoes(nome)
+        if modo in ("python", "openmusic") and (modo not in motores or motores[modo].estado == "indisponivel"):
+            continue
         onde = " Também no OpenMusic (assistido: o compositor roda o patch)." if "openmusic" in motores else ""
         linhas.append(f"- {proc.nome}: {proc.descricao}{onde}")
         for chave, f in proc.parametros.items():

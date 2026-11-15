@@ -125,6 +125,9 @@ if st.session_state.get("modo") not in modos:
     st.session_state.modo = "automatico"
 st.sidebar.radio("Motor", modos, format_func=MODOS.__getitem__, key="modo", horizontal=True,
                  help="Automático escolhe por regras explícitas; os outros são respeitados ou recusados com o motivo.")
+if st.session_state.modo == "openmusic":
+    st.sidebar.caption("OpenMusic assistido: o chat prepara uma tarefa para você executar o patch no OpenMusic "
+                       "e importar a saída. Para combinar com procedimentos Python, selecione Híbrido.")
 with st.sidebar.expander("Motores e bibliotecas"):
     for cap in _registro().capacidades:
         versao = f" {cap.versao}" if cap.versao else ""

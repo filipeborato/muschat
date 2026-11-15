@@ -86,6 +86,10 @@ def test_geracao_e_orquestracao_usam_registro_grave_do_cello_sem_saltos_enormes(
             if parte.instrumento == "Violoncelo":
                 assert linha and all(3600 <= a <= 6000 for a in linha)
                 assert parte.tessitura == (3600, 8100)
+            elif parte.instrumento == "Viola":
+                assert all(4800 <= a <= 7200 for a in linha)
+            elif parte.instrumento == "Violino":
+                assert all(5500 <= a <= 8400 for a in linha)
 
 
 def test_registro_inicial_nao_impede_transposicao_explicita_do_cello():

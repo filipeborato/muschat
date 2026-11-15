@@ -53,7 +53,8 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
         "serie_harmonica",
         "Cria uma peça nova (substitui a atual): alturas dos parciais harmônicos de uma fundamental, distribuídas "
         "entre os instrumentos do plano (padrão: quarteto de cordas) respeitando a tessitura, ritmo sorteado. "
-        "Cello começa em Dó2–Dó4; saltos de até uma oitava. Para outro registro, encadeie transpor.",
+        "Registros iniciais: violino Sol3–Dó6, viola Dó3–Dó5, cello Dó2–Dó4; saltos de até uma oitava. "
+        "Para outro registro, encadeie transpor.",
         {
             "fundamental": Faixa(2400, 6000, 3600, "fundamental", unidade="midicents (3600 = Dó 2, 6000 = Dó 4)"),
             "parciais": Faixa(2, 32, 16, "quantos parciais (1..n)"),
@@ -68,7 +69,8 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
         "orquestrar_material",
         "Cria uma peça nova a partir das alturas da composição atual (ex.: material espectral importado do "
         "OpenMusic): elas viram o reservatório dos instrumentos do plano, respeitando a tessitura, ritmo sorteado. "
-        "Cello começa em Dó2–Dó4; saltos de até uma oitava. Para outro registro, encadeie transpor.",
+        "Registros iniciais: violino Sol3–Dó6, viola Dó3–Dó5, cello Dó2–Dó4; saltos de até uma oitava. "
+        "Para outro registro, encadeie transpor.",
         {
             "compassos": Faixa(1, 32, 8, "número de compassos 4/4"),
             "pausas": Faixa(0, 0.9, 0.15, "proporção de pausas", inteiro=False),

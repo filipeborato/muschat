@@ -67,6 +67,16 @@ def test_procedimento_fora_do_registro_nunca_entra_no_prompt():
     assert "serie_harmonica" in sistema and "- transpor" not in sistema and "- densidade" not in sistema
 
 
+def test_planejamento_respeita_motor_selecionado_e_prepara_tarefa(tmp_path):
+    c, r, g = _rodar(_plano(), modo="openmusic", registro=COM_OM, pasta=tmp_path)
+    sistema = g.chamadas[0].config.system_instruction
+    assert "Motor selecionado na interface: openmusic" in sistema
+    assert "- serie_harmonica:" in sistema
+    assert "- tecnicas_por_gesto:" not in sistema and "- densidade:" not in sistema
+    assert r.tarefa is not None and c.pendente is not None
+    assert not c.versoes
+
+
 def test_pedido_que_escolhe_o_motor_vale_como_escolha_manual():
     c, r, _ = _rodar({**_plano(), "motor": "openmusic"})
     assert r.versao is None and "OpenMusic" in r.resumo

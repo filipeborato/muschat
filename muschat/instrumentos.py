@@ -36,8 +36,8 @@ def _sem_altura() -> Instrumento:
 
 INSTRUMENTOS: dict[str, Instrumento] = {
     # cordas friccionadas
-    "violino": Instrumento("cordas", "sol", (5500, 10300)),
-    "viola": Instrumento("cordas", "do3", (4800, 9100)),
+    "violino": Instrumento("cordas", "sol", (5500, 10300), registro_inicial=(5500, 8400)),
+    "viola": Instrumento("cordas", "do3", (4800, 9100), registro_inicial=(4800, 7200)),
     "violoncelo": Instrumento("cordas", "fa", (3600, 8100), registro_inicial=(3600, 6000)),
     "contrabaixo": Instrumento("cordas", "fa", (2800, 6700), (0, 0, -1)),
     # madeiras

@@ -26,6 +26,18 @@ def quarteto():
     return _rodar("serie_harmonica", compassos=4)
 
 
+@pytest.mark.parametrize("semente", [1, 7, 42])
+def test_adensar_preserva_registro_grafia_e_saltos_da_geracao(semente):
+    inicial = _rodar("serie_harmonica", compassos=16, parciais=32, pausas=0.5, semente=semente)
+    nova = _rodar("densidade", inicial, inicial=1, final=4, semente=semente)
+    for antes, depois in zip(inicial.partes, nova.partes):
+        reservatorio = {a.midicents: a.grafia for v in antes.vozes for e in v.eventos if isinstance(e, Nota)
+                        for a in e.alturas}
+        linha = [e.alturas[0] for e in depois.vozes[0].eventos if isinstance(e, Nota)]
+        assert all(a.midicents in reservatorio and a.grafia == reservatorio[a.midicents] for a in linha)
+        assert all(abs(a.midicents - b.midicents) <= 1200 for a, b in zip(linha, linha[1:]))
+
+
 def _notas(ir, parte=None):
     return [e for p, _, e in ir.eventos() if isinstance(e, Nota) and (parte is None or p.id == parte)]
 

@@ -34,10 +34,11 @@ def densidade_por_compasso(atual: ir.MusicIR, selecao: Selecao, alvo_de: Callabl
     """Ataques por semínima do compasso n = alvo_de(n): remove ataques (viram pausas) ou cria (pausa vira nota com
     altura já usada na voz; nota se divide em duas)."""
     ids = Ids(atual)
+    processados: dict[str, list[ir.Evento]] = {}
 
     def compasso(parte: ir.Parte, voz: ir.Voz, grupo: list[ir.Evento], n: int) -> list[ir.Evento]:
         alvo = round(alvo_de(n) * 4 * atual.compassos[n - 1].comprimento)
-        reservatorio = sorted({a.midicents for e in voz.eventos if isinstance(e, ir.Nota) for a in e.alturas})
+        reservatorio = {a.midicents: a for e in voz.eventos if isinstance(e, ir.Nota) for a in e.alturas}
         eventos = list(grupo)
 
         def notas() -> list[int]:
@@ -48,11 +49,26 @@ def densidade_por_compasso(atual: ir.MusicIR, selecao: Selecao, alvo_de: Callabl
             eventos[k] = pausa(eventos[k])
         while len(notas()) < alvo:
             pausas = [k for k, e in enumerate(eventos) if isinstance(e, ir.Pausa)]
-            if pausas and reservatorio:
-                k = rng.choice(pausas)
+            preenchiveis = []
+            anteriores = processados.get(voz.id, [])
+            inicio_processado = anteriores[0].inicio if anteriores else grupo[0].inicio
+            fora = anteriores + [e for e in voz.eventos if e.inicio < inicio_processado or e.inicio >= grupo[-1].fim]
+            for k in pausas:
+                e = eventos[k]
+                notas_vizinhas = sorted((n for n in [*fora, *eventos] if isinstance(n, ir.Nota)),
+                                       key=lambda n: n.inicio)
+                antes = [n for n in notas_vizinhas if n.inicio < e.inicio]
+                depois = [n for n in notas_vizinhas if n.inicio > e.inicio]
+                vizinhas = antes[-1:] + depois[:1]
+                opcoes = [a for a in sorted(reservatorio) if all(
+                    abs(a - n.alturas[0].midicents) <= 1200 for n in vizinhas)]
+                if opcoes:
+                    preenchiveis.append((k, opcoes))
+            if preenchiveis:
+                k, opcoes = rng.choice(preenchiveis)
                 e = eventos[k]
                 eventos[k] = ir.Nota(id=e.id, inicio=e.inicio, duracao=e.duracao, proveniencia=e.proveniencia,
-                                     alturas=[ir.Altura(midicents=rng.choice(reservatorio))])
+                                     alturas=[reservatorio[rng.choice(opcoes)]])
                 continue
             divisiveis = [k for k in notas() if _metades(eventos[k].duracao)]
             if not divisiveis:
@@ -63,6 +79,7 @@ def densidade_por_compasso(atual: ir.MusicIR, selecao: Selecao, alvo_de: Callabl
             eventos[k:k + 1] = [e.model_copy(update={"duracao": a, "glissando": False}),
                                 e.model_copy(update={"id": ids.novo(e.id), "inicio": e.inicio + a, "duracao": b,
                                                      "dinamica": None, "texto": None})]
+        processados.setdefault(voz.id, []).extend(eventos)
         return eventos
 
     return por_compasso(atual, selecao, compasso)
