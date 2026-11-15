@@ -18,7 +18,7 @@ from typing import Protocol
 
 import abjad
 
-from muschat.musicir import Compasso, MusicIR, Nota, Parte, Pausa, Quialtera, Voz, pedacos
+from muschat.musicir import Compasso, MusicIR, Nota, Parte, Pausa, Quialtera, Voz, ligam, pedacos
 from muschat.notacao.musicxml import grafia
 from muschat.notacao.tecnicas import Indicacoes, tecnica
 
@@ -133,13 +133,15 @@ def _voz(voz: Voz, inicios: list[Fraction], fim: Fraction, *,
         cadeia = cadeias.get(e.id, [])
         razao = math.prod((Fraction(grupos[g].numerador, grupos[g].denominador) for g in cadeia), start=Fraction(1))
         seguinte = eventos[k + 1] if k + 1 < len(eventos) else None
-        colocar(_folha(e, e.duracao * razao, indicacoes, glissando=isinstance(seguinte, Nota)), e.inicio, cadeia)
+        colocar(_folha(e, e.duracao * razao, indicacoes, glissando=isinstance(seguinte, Nota),
+                       liga=isinstance(e, Nota) and ligam(e, seguinte)), e.inicio, cadeia)
         cursor = e.fim
     lacuna(cursor, fim)
     return abjad_voz, folhas
 
 
-def _folha(e: Nota | Pausa, notada: Fraction, indicacoes: Indicacoes, *, glissando: bool) -> abjad.Leaf:
+def _folha(e: Nota | Pausa, notada: Fraction, indicacoes: Indicacoes, *, glissando: bool,
+           liga: bool) -> abjad.Leaf:
     duracao = abjad.Duration(notada.numerator, notada.denominator)
     tecnicas = [tecnica(t) for t in e.tecnicas] if isinstance(e, Nota) else []
     try:
@@ -173,6 +175,8 @@ def _folha(e: Nota | Pausa, notada: Fraction, indicacoes: Indicacoes, *, glissan
                 abjad.attach(abjad.Articulation(nome), folha)
         if e.glissando and glissando:  # glissando só entre duas notas
             abjad.attach(abjad.Glissando(), folha)
+        if liga:
+            abjad.attach(abjad.Tie(), folha)
     return folha
 
 

@@ -55,6 +55,15 @@ class Nota(_Evento):
     dinamica: Dinamica | None = None
     texto: str | None = None
     glissando: bool = Field(default=False, description="Glissando até a próxima nota da voz.")
+    ligada: bool = Field(default=False, description="Ligadura de prolongamento até a próxima nota da voz (mesmas "
+                         "alturas, começando onde esta termina); inclusive através da barra.")
+
+
+def ligam(e: Nota, seguinte: object) -> bool:
+    """A ligadura de prolongamento só vale para uma nota igual que começa onde esta termina; depois de uma
+    transformação que mudou alturas ou ritmo ela simplesmente some (nunca liga alturas diferentes)."""
+    return (e.ligada and isinstance(seguinte, Nota) and seguinte.inicio == e.fim
+            and [a.midicents for a in seguinte.alturas] == [a.midicents for a in e.alturas])
 
 
 class Pausa(_Evento):

@@ -22,7 +22,7 @@ from muschat.exportacao import PERDAS, experimento_json, metricas, pacote, para_
 from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
-from muschat.orquestrador import descartar, reaplicar, retomar
+from muschat.orquestrador import abrir, descartar, reaplicar, retomar
 from muschat.procedimentos import CATALOGO
 from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
@@ -190,10 +190,23 @@ def _arquivo_json(c: Composicao):
                 st.rerun()
 
 
+def _abrir_partitura(c: Composicao):
+    """MusicXML de fora (Dorico, MuseScore, OpenMusic, NotaGen) vira Versão nova; desfazer volta à anterior."""
+    with st.popover("Abrir partitura (MusicXML)", width="stretch"):
+        arquivo = st.file_uploader("partitura", type=["musicxml", "xml", "mxl"], key="abrir-musicxml")
+        if arquivo is not None and st.button("Abrir como nova versão", width="stretch"):
+            resultado = abrir(c, arquivo.getvalue(), arquivo.name)
+            if resultado.versao is None:
+                st.error(resultado.resumo)
+            else:
+                st.rerun()
+
+
 def _secao_composicao(c: Composicao):
     _secao_pendente(c)
     with st.sidebar.expander("Composição", expanded=c.atual is not None or c.pendente is not None):
         _arquivo_json(c)
+        _abrir_partitura(c)
         if c.atual is None or c.indice is None:
             st.caption("Nenhuma composição ainda. Peça, por exemplo: \"crie oito compassos para quarteto de cordas "
                        "a partir de parciais harmônicos\".")
@@ -201,7 +214,8 @@ def _secao_composicao(c: Composicao):
         st.markdown(f"**Versão atual: {c.indice + 1}**  \n{c.atual.resumo}")
         _inspecao(c)
         st.button("Desfazer", on_click=c.desfazer, disabled=c.atual.anterior is None, width="stretch")
-        _ajustar(c)
+        if c.atual.reaplicavel:
+            _ajustar(c)
         _exportar(c)
         nomes = [f"{i + 1} · {v.experimento['operacao']} · {v.data:%H:%M} · {v.resumo.partition(': ')[2][:50]}"
                  for i, v in enumerate(c.versoes)]

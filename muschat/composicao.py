@@ -21,6 +21,11 @@ class Versao:
     anterior: int | None  # índice da Versão de onde esta partiu (desfazer volta para ela)
     data: datetime = field(default_factory=datetime.now)
 
+    @property
+    def reaplicavel(self) -> bool:
+        """Só Versão feita por operação tem plano para reaplicar (a aberta de arquivo não tem)."""
+        return "plano" in self.experimento
+
 
 class Pendencia(BaseModel):
     """Lista de etapas parada numa etapa assistida do OpenMusic: tudo o que é preciso para retomar dali."""

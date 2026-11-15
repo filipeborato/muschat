@@ -6,13 +6,15 @@ import json
 import re
 import struct
 import zipfile
+from bisect import bisect_right
 from collections import Counter
 from statistics import pstdev
 
 from muschat.composicao import Composicao
-from muschat.musicir import MusicIR, Nota, comparar
+from muschat.musicir import MusicIR, Nota, comparar, ligam
 from muschat.notacao.lilypond import Gravacao
 from muschat.notacao.musicxml import para_musicxml
+from muschat.notacao.tecnicas import cabe
 
 TPQ = 480  # ticks por semínima
 _CANAIS = [c for c in range(16) if c != 9]  # canal 10 é percussão no General MIDI
@@ -22,8 +24,9 @@ _VELOCIDADE = {"pppp": 16, "ppp": 24, "pp": 36, "p": 48, "mp": 64, "mf": 80, "f"
 PERDAS = {
     "midi": "MIDI perde técnicas estendidas, articulações, grafia (enarmonia, quiálteras) e microtons (arredondados "
             "ao semitom); curvas, dados espectrais e eventos eletrônicos ficam de fora.",
-    "musicxml": "MusicXML não leva curvas de controle, dados espectrais nem eventos eletrônicos. Edições feitas no "
-                "Dorico/MuseScore não voltam ao Muschat.",
+    "musicxml": "MusicXML não leva curvas de controle, dados espectrais nem eventos eletrônicos. Ao abrir um "
+                "MusicXML de fora, palavras voltam como texto, articulações do grimório como técnica, e o resto "
+                "(legato, fermata, apojatura, cabeça especial, troca de clave...) é descartado com aviso.",
     "lilypond": "LilyPond/PDF/SVG são só gravação: não levam curvas, dados espectrais, eventos eletrônicos nem a "
                 "proveniência dos eventos.",
     "json": "JSON é o formato sem perda: guarda a MusicIR completa, as Versões, a etapa pendente e a proveniência.",
@@ -66,15 +69,20 @@ def para_midi(ir: MusicIR) -> bytes:
                 if c.andamento:
                     eventos.append((t, 0, b"\xff\x51\x03" + (60_000_000 // c.andamento).to_bytes(3, "big")))
         for voz in parte.vozes:
-            velocidade = 80
-            for e in voz.eventos:
+            velocidade, ataque = 80, None  # ataque: início da cadeia de notas ligadas em curso
+            for e, seguinte in zip(voz.eventos, [*voz.eventos[1:], None]):
                 if not isinstance(e, Nota):
                     continue
-                velocidade = _VELOCIDADE.get(e.dinamica or "", velocidade)
+                if ataque is None:
+                    ataque = e.inicio
+                    velocidade = _VELOCIDADE.get(e.dinamica or "", velocidade)
+                if ligam(e, seguinte):  # notas ligadas soam como um só ataque
+                    continue
                 for a in e.alturas:
                     nota = min((a.midicents + 50) // 100, 127)
-                    eventos.append((_ticks(e.inicio), 1, bytes([0x90 | canal, nota, velocidade])))
+                    eventos.append((_ticks(ataque), 1, bytes([0x90 | canal, nota, velocidade])))
                     eventos.append((_ticks(e.fim), 0, bytes([0x80 | canal, nota, 0])))
+                ataque = None
         faixas.append(_faixa(eventos))
     return b"MThd" + struct.pack(">IHHH", 6, 1, len(faixas), TPQ) + b"".join(faixas)
 
@@ -85,10 +93,14 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
     eventos = [e for _, _, e in ir.eventos()]
     notas = [e for e in eventos if isinstance(e, Nota)]
     alturas = [a.midicents for n in notas for a in n.alturas]
-    intervalos = []
-    for _, voz in ((p, v) for p in ir.partes for v in p.vozes):
+    intervalos, saltos_oitava, frases = [], Counter(), {}
+    for parte, voz in ((p, v) for p in ir.partes for v in p.vozes):
         da_voz = [e for e in voz.eventos if isinstance(e, Nota)]
-        intervalos += [abs(b.alturas[0].midicents - a.alturas[0].midicents) for a, b in zip(da_voz, da_voz[1:])]
+        da_voz_intervalos = [abs(b.alturas[0].midicents - a.alturas[0].midicents) for a, b in zip(da_voz, da_voz[1:])]
+        intervalos += da_voz_intervalos
+        saltos_oitava[parte.id] += sum(i > 1200 for i in da_voz_intervalos)
+        if voz is parte.vozes[0] and da_voz:
+            frases[parte.id] = _densidade_por_frase(voz.eventos)
     seminimas = sum(c.comprimento for c in ir.compassos) * 4
     m = {
         "eventos": len(eventos),
@@ -97,6 +109,15 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
         "ambito_midicents": [min(alturas), max(alturas)] if alturas else None,
         "duracoes": {str(d): k for d, k in sorted(Counter(n.duracao for n in notas).items())},
         "desvio_intervalar_cents": round(pstdev(intervalos), 1) if intervalos else None,
+        "intervalos": {"repeticoes": sum(i == 0 for i in intervalos),
+                       "conjuntos": sum(0 < i <= 200 for i in intervalos),
+                       "saltos": sum(i > 200 for i in intervalos)},
+        "saltos_acima_da_oitava": dict(saltos_oitava),
+        "cruzamentos": _cruzamentos(ir),
+        "densidade_por_frase": frases,
+        "tecnicas_incabiveis": [f"{p.id} c.{_compasso(ir, e.inicio)}: {t} ({p.instrumento})"
+                                for p, _, e in ir.eventos() if isinstance(e, Nota)
+                                for t in e.tecnicas if not cabe(t, p.instrumento)],
     }
     if violacoes is not None:
         m["violacoes"] = len(violacoes)
@@ -104,6 +125,35 @@ def metricas(ir: MusicIR, *, anterior: MusicIR | None = None, violacoes: list | 
         d = comparar(anterior, ir)
         m["diff"] = {"adicionados": len(d.adicionados), "removidos": len(d.removidos), "alterados": len(d.alterados)}
     return m
+
+
+def _densidade_por_frase(eventos: list) -> list[float]:
+    """Ataques por semínima de cada frase da voz; frase = notas seguidas, separadas por pausa (ou fim da voz)."""
+    densidades, frase = [], []
+    for e in [*eventos, None]:
+        if isinstance(e, Nota):
+            frase.append(e)
+        elif frase:
+            seminimas = (frase[-1].fim - frase[0].inicio) * 4
+            densidades.append(round(float(len(frase) / seminimas), 2))
+            frase = []
+    return densidades
+
+
+# shortcut: compara todo par de notas de partes vizinhas, O(n²); varrer por tempo se peças longas pesarem
+def _cruzamentos(ir: MusicIR) -> int:
+    """Pares de notas simultâneas em partes vizinhas (ordem da grade) em que a de cima soa abaixo da de baixo."""
+    def notas(parte):
+        return [e for v in parte.vozes for e in v.eventos if isinstance(e, Nota)]
+
+    return sum(1 for cima, baixo in zip(ir.partes, ir.partes[1:])
+               for a in notas(cima) for b in notas(baixo)
+               if a.inicio < b.fim and b.inicio < a.fim
+               and min(x.midicents for x in a.alturas) < max(x.midicents for x in b.alturas))
+
+
+def _compasso(ir: MusicIR, inicio) -> int:
+    return bisect_right(ir.inicios(), inicio)
 
 
 def experimento_json(c: Composicao, *, motores: dict[str, str] | None = None) -> str:

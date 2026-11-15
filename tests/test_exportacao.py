@@ -5,6 +5,7 @@ import zipfile
 from fractions import Fraction as F
 
 from muschat.exportacao import experimento_json, metricas, pacote, para_midi
+from muschat.musicir import Altura, Compasso, MusicIR, Nota, Parte, Pausa, Proveniencia, Voz
 from muschat.notacao.lilypond import Gravacao
 from tests.exemplos import quarteto
 
@@ -66,6 +67,37 @@ def test_metricas_descritivas_conferem_na_musicir_feita_a_mao():
     assert "violacoes" not in m and "diff" not in m
 
 
+def _melodia(pid: str, instrumento: str, eventos: list[tuple[int | None, F] | tuple[int, F, list[str]]]) -> Parte:
+    """(midicents ou None = pausa, duração[, técnicas]) em sequência, a partir do tempo 0."""
+    fim, criados = F(0), []
+    for k, (altura, duracao, *tecnicas) in enumerate(eventos):
+        eid, prov = f"{pid}{k}", Proveniencia(origem="algoritmo")
+        criados.append(Pausa(id=eid, inicio=fim, duracao=duracao, proveniencia=prov) if altura is None else
+                       Nota(id=eid, inicio=fim, duracao=duracao, alturas=[Altura(midicents=altura)],
+                            tecnicas=tecnicas[0] if tecnicas else [], proveniencia=prov))
+        fim += duracao
+    return Parte(id=pid, instrumento=instrumento, vozes=[Voz(id=f"{pid}v", eventos=criados)])
+
+
+def test_metricas_de_linha_cruzamento_frase_e_tecnica():
+    q = F(1, 4)
+    # flauta: Dó5, Ré5 (conjunto), Ré5 (repetição), pausa, Dó4 (salto de 1400 cents), Ré4
+    flauta = _melodia("fl", "Flauta", [(7200, q), (7400, q), (7400, q), (None, q),
+                                       (6000, F(1, 2), ["jet whistle"]), (6200, F(1, 2), ["slap"])])
+    # violoncelo acima da flauta na segunda metade do compasso 2: cruzamento
+    cello = _melodia("vc", "Violoncelo", [(None, F(1)), (4800, F(1, 2)), (6500, F(1, 2))])
+    ir = MusicIR(titulo="t", compassos=[Compasso(numerador=4, denominador=4)] * 2, partes=[flauta, cello])
+    m = metricas(ir)
+    assert m["intervalos"] == {"repeticoes": 1, "conjuntos": 2, "saltos": 2}  # 200, 0, 1400, 200 | 1700
+    assert m["saltos_acima_da_oitava"] == {"fl": 1, "vc": 1}
+    assert m["cruzamentos"] == 1  # Ré4 da flauta contra o Fá4 do violoncelo
+    # frases separadas por pausa: fl = 3 ataques em 3 semínimas, depois 2 em 4; vc = 2 em 4
+    assert m["densidade_por_frase"] == {"fl": [1.0, 0.5], "vc": [0.5]}
+    assert m["tecnicas_incabiveis"] == []  # slap e jet whistle se tocam na flauta
+    cello.vozes[0].eventos[1].tecnicas = ["slap"]
+    assert metricas(ir)["tecnicas_incabiveis"] == ["vc c.2: slap (Violoncelo)"]
+
+
 def test_metricas_com_versao_anterior_e_restricoes():
     antes = quarteto()
     depois = antes.model_copy(deep=True)
@@ -105,3 +137,17 @@ def test_json_do_experimento_registra_pedido_modelo_semente_dependencias_e_diff(
     assert v["dependencias"]["abjad"] and v["dependencias"]["python"]
     assert v["diff"]["adicionados"] and v["metricas"]["notas"] > 0
     assert exp["motores"] == {"LilyPond": "2.24.4"}
+
+
+def test_midi_soma_notas_ligadas_num_so_ataque():
+    prov = Proveniencia(origem="compositor")
+    voz = Voz(id="v", eventos=[
+        Nota(id="a", inicio=F(0), duracao=F(3, 4), alturas=[Altura(midicents=6000)], ligada=True, proveniencia=prov),
+        Nota(id="b", inicio=F(3, 4), duracao=F(1, 2), alturas=[Altura(midicents=6000)], ligada=True,
+             proveniencia=prov),
+        Nota(id="c", inicio=F(5, 4), duracao=F(1, 4), alturas=[Altura(midicents=6000)], proveniencia=prov),
+        Nota(id="d", inicio=F(3, 2), duracao=F(1, 2), alturas=[Altura(midicents=6200)], proveniencia=prov)])
+    ir = MusicIR(titulo="t", compassos=[Compasso(numerador=4, denominador=4)] * 2,
+                 partes=[Parte(id="p", instrumento="Flauta", vozes=[voz])])
+    tpq, (faixa,) = _ler_midi(para_midi(ir))
+    assert faixa == [(0, 60, int(F(3, 2) * 4 * tpq)), (int(F(3, 2) * 4 * tpq), 62, 2 * tpq)]

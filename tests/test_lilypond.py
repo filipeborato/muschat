@@ -1,3 +1,4 @@
+import re
 import subprocess
 from fractions import Fraction as F
 from pathlib import Path
@@ -129,3 +130,13 @@ def test_compilacao_real_da_grade_e_das_partes():
     assert g.aviso is None, g.aviso
     assert set(g.pdfs) == {"grade", "Violino (vln)", "Violoncelo (vc)"} and all(p.startswith(b"%PDF") for p in g.pdfs.values())
     assert g.svgs and "<svg" in g.svgs[0]
+
+
+def test_ligadura_de_prolongamento_atravessa_a_barra_e_some_entre_alturas_diferentes():
+    ly = para_lilypond(_solo([
+        _nota("a", F(0), F(1, 2), 4800), _nota("b", F(1, 2), F(1, 2), 5000, ligada=True),
+        _nota("c", F(1), F(1, 2), 5000, ligada=True),  # ligada a uma altura diferente: não se escreve
+        _nota("d", F(3, 2), F(1, 2), 5200),
+    ], compassos=2))["grade"]
+    assert ly.count("~") == 1
+    assert re.search(r"d2\s*~\s*d2\s+e2", ly)

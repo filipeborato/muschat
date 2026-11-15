@@ -21,7 +21,7 @@ from muschat import prompts
 from muschat.composicao import Composicao, Pendencia, Versao
 from muschat.instrumentos import FAMILIAS, INSTRUMENTOS
 from muschat.musicir import MusicIR, Origem, Proveniencia, comparar, localizar
-from muschat.notacao.musicxml import para_musicxml
+from muschat.notacao.musicxml import de_musicxml, para_musicxml
 from muschat.notacao.tecnicas import tecnicas_da_familia
 from muschat.openmusic import PASTA_TAREFAS, Tarefa, criar_tarefa, importar
 from muschat.plano import Operacao, Parametro, Plano
@@ -80,6 +80,8 @@ def reaplicar(composicao: Composicao, parametros: list[dict[str, float]], *, reg
         return _recusa(Recusa("não há operação para reaplicar."))
     if composicao.pendente:
         return _aguardando(composicao.pendente)
+    if not versao.reaplicavel:
+        return _recusa(Recusa("esta Versão veio de um arquivo aberto; não há operação para reaplicar."))
     plano = Plano.model_validate(versao.experimento["plano"])
     plano = plano.model_copy(update={"semente": versao.experimento["semente"], "operacoes": [
         op.model_copy(update={"parametros": [Parametro(nome=k, valor=v) for k, v in novos.items()]})
@@ -110,6 +112,30 @@ def retomar(composicao: Composicao, saida: bytes | str, *, catalogo: dict[str, P
         return _seguir(contexto, nova, composicao, catalogo, pasta_tarefas)
     except Recusa as exc:
         return _recusa(exc)
+
+
+def abrir(composicao: Composicao, dados: bytes, nome: str, *, origem: Origem = "compositor",
+          autor: str | None = None) -> Resultado:
+    """Um arquivo MusicXML (.musicxml, .xml ou .mxl) vira Versão nova, com a proveniência de quem o fez (o
+    compositor, ou um motor externo com autor); o que a MusicIR não representa vai como aviso no resumo. Desfazer
+    volta à Versão de antes."""
+    if composicao.pendente:
+        return _aguardando(composicao.pendente)
+    nome = neutralizar(nome)
+    try:
+        ir, avisos = de_musicxml(dados)
+        operacao = f"op{len(composicao.versoes) + 1}"
+        ir = _validar(ir)
+        ir = _carimbar(ir, {e.id for _, _, e in ir.eventos()}, origem, operacao, autor)
+    except (ValueError, Recusa) as exc:
+        return _recusa(Recusa(f"{nome}: {_primeira_linha(exc)}"))
+    avisos = [neutralizar(a) for a in avisos]
+    resumo = (f"Versão {len(composicao.versoes) + 1}: aberto {nome}; {len(ir.partes)} partes, {len(ir.compassos)} "
+              f"compassos" + (f"; descartado na leitura: {'; '.join(avisos)}" if avisos else ""))
+    versao = composicao.adicionar(ir, resumo, {
+        "pedido": f"abrir {nome}", "operacao": operacao, "arquivo": nome, "avisos": avisos,
+        "dependencias": dependencias()}, anterior=composicao.indice)
+    return Resultado(resumo, versao)
 
 
 def descartar(composicao: Composicao) -> None:
@@ -219,11 +245,7 @@ def dependencias() -> dict[str, str | None]:
 def _conferir(plano: Plano, antes: MusicIR | None, nova: MusicIR, *, origem: Origem, operacao: str) -> MusicIR:
     """Revalida a MusicIR da etapa, confere o invariante de preservação contra a etapa anterior e carimba a
     proveniência nos eventos criados/alterados."""
-    try:
-        nova = MusicIR.model_validate(nova.model_dump())  # model_copy dos procedimentos não revalida
-        para_musicxml(nova)  # cada etapa precisa ser notável (ex.: nada atravessa a barra de compasso)
-    except ValueError as exc:
-        raise Recusa(_primeira_linha(exc)) from exc
+    nova = _validar(nova)
     if antes is None:
         return _carimbar(nova, {e.id for _, _, e in nova.eventos()}, origem, operacao)
     dif = comparar(antes, nova)
@@ -237,10 +259,21 @@ def _conferir(plano: Plano, antes: MusicIR | None, nova: MusicIR, *, origem: Ori
     return _carimbar(nova, set(dif.adicionados) | set(dif.alterados), origem, operacao)
 
 
-def _carimbar(ir: MusicIR, ids: set[str], origem: Origem, operacao: str) -> MusicIR:
+def _validar(nova: MusicIR) -> MusicIR:
+    """Revalida (model_copy não revalida) e exige que seja notável (ex.: nada atravessa a barra de compasso)."""
+    try:
+        nova = MusicIR.model_validate(nova.model_dump())
+        para_musicxml(nova)
+    except ValueError as exc:
+        raise Recusa(_primeira_linha(exc)) from exc
+    return nova
+
+
+def _carimbar(ir: MusicIR, ids: set[str], origem: Origem, operacao: str, autor: str | None = None) -> MusicIR:
     """Proveniência do motor + id da operação nos eventos criados ou alterados (o autor do OpenMusic fica)."""
     def prov(atual: Proveniencia) -> Proveniencia:
-        return Proveniencia(origem=origem, operacao=operacao, autor=atual.autor if atual.origem == origem else None)
+        return Proveniencia(origem=origem, operacao=operacao,
+                            autor=autor or (atual.autor if atual.origem == origem else None))
 
     return ir.model_copy(update={"partes": [p.model_copy(update={"vozes": [v.model_copy(update={"eventos": [
         e.model_copy(update={"proveniencia": prov(e.proveniencia)}) if e.id in ids else e for e in v.eventos
