@@ -5,14 +5,17 @@ from dataclasses import replace
 from fractions import Fraction as F
 from pathlib import Path
 
-from muschat.musicir import Nota
+from muschat.composicao import Composicao
+from muschat.musicir import Altura, Compasso, MusicIR, Nota, Parte, Pausa, Proveniencia, Voz
 from muschat.openmusic import PATCHES, InstalacaoOM
 from muschat.orquestrador import retomar
+from muschat.procedimentos.espectrais import parciais
 from muschat.registro import detectar
 from tests.test_composicao import _plano, _quarteto
 from tests.test_motores import _rodar
 
-LIBS = {n: Path(f"C:/OM/Libraries/{n}") for n in ("esquisse", "chaos", "situation", "om2csound", "omchroma")}
+LIBS = {n: Path(f"C:/OM/Libraries/{n}") for n in ("esquisse", "chaos", "situation", "om2csound", "omchroma",
+                                                  "cluster-engine")}
 OM = InstalacaoOM(Path("C:/OM/OM 8.0.exe"), "8.0", LIBS)
 APROVADOS = {nome: replace(p, arquivo=p.arquivo or __file__, validado=True) for nome, p in PATCHES.items()}
 COM_LIBS = detectar(lilypond=None, openmusic=OM, abjad_versao="3.31", which=lambda e: f"C:/bin/{e}.exe",
@@ -302,3 +305,79 @@ def test_situation_impossivel_com_intervalos_e_recusado_sem_ir_ao_openmusic(tmp_
 def test_situation_restricao_com_parte_inexistente_e_recusada(tmp_path):
     c, r, _ = _situation_com(tmp_path, [{"tipo": "tessitura", "grave": 3600, "agudo": 9600, "partes": ["1", "2"]}])
     assert r.tarefa is None and "['1', '2']" in r.resumo and "P1" in r.resumo
+
+
+# --- 09 (composição musical): Cluster Engine ---------------------------------------------------------------------------
+
+def _duo_com_ligadura():
+    prov = Proveniencia(origem="compositor")
+
+    def nota(i, inicio, dur, mc, **kw):
+        return Nota(id=i, inicio=inicio, duracao=dur, alturas=[Altura(midicents=mc)], proveniencia=prov, **kw)
+
+    violino = Parte(id="vl", instrumento="Violino", vozes=[Voz(id="vlv", eventos=[
+        nota("a", F(0), F(1, 4), 7200), Pausa(id="b", inicio=F(1, 4), duracao=F(1, 4), proveniencia=prov),
+        nota("c", F(1, 2), F(1, 8), 7400, ligada=True), nota("d", F(5, 8), F(1, 8), 7400),
+        nota("e", F(3, 4), F(1, 4), 7600)])])
+    cello = Parte(id="vc", instrumento="Violoncelo", clave="fa", vozes=[Voz(id="vcv", eventos=[
+        nota("f", F(0), F(1), 4800)])])
+    c = Composicao()
+    c.adicionar(MusicIR(titulo="duo", compassos=[Compasso(numerador=4, denominador=4)], partes=[violino, cello]),
+                "duo", {}, anterior=None)
+    return c
+
+
+def _cluster(tmp_path, **params):
+    padrao = {"fundamental": 3600, "parciais": 16, "microtom": 1, "salto_maximo": 1200, "sem_unissono": 1,
+              "sem_cruzamento": 1, "notas_comuns": 1}
+    plano = _plano("alturas_por_restricoes", {**padrao, **params})
+    return _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=_duo_com_ligadura(), pasta=tmp_path)
+
+
+def test_cluster_engine_entrada_leva_ritmo_fixo_com_ligadura_somada_e_dominio_por_tessitura(tmp_path):
+    c, r, _ = _cluster(tmp_path)
+    assert r.tarefa is not None, r.resumo
+    espectro = parciais(3600, 16, 1)
+    violino = [a for a in espectro if 5500 <= a <= 10300]
+    cello = [a for a in espectro if 3600 <= a <= 8100]
+    assert (Path(r.tarefa.pasta) / "entrada.txt").read_text() == (
+        "2 1200 1 1 1 4\n4 4\n"
+        f"4 1 4 -1 4 1 4 1 4\n{len(violino)} {' '.join(map(str, violino))}\n"  # colcheias ligadas = uma semínima
+        f"1 1 1\n{len(cello)} {' '.join(map(str, cello))}\n")
+
+
+def test_cluster_engine_saida_aplica_uma_altura_por_nota_e_a_mesma_na_ligadura(tmp_path):
+    c, r, _ = _cluster(tmp_path)
+    r2 = retomar(c, "2 3 6000 6400 6700 1 3600")
+    assert r2.versao is not None, r2.resumo
+    violino, cello = r2.versao.ir.partes
+    notas = [e for e in violino.vozes[0].eventos if isinstance(e, Nota)]
+    assert [n.alturas[0].midicents for n in notas] == [6000, 6400, 6400, 6700]
+    assert [(e.inicio, e.duracao) for e in violino.vozes[0].eventos] == [
+        (F(0), F(1, 4)), (F(1, 4), F(1, 4)), (F(1, 2), F(1, 8)), (F(5, 8), F(1, 8)), (F(3, 4), F(1, 4))]
+    assert cello.vozes[0].eventos[0].alturas[0].midicents == 3600
+    assert notas[0].proveniencia.origem == "openmusic"
+
+
+def test_cluster_engine_saida_fora_do_dominio_ou_curta_e_recusada(tmp_path):
+    c, r, _ = _cluster(tmp_path)
+    assert "fora das alturas" in retomar(c, "2 3 6000 6400 6050 1 3600").resumo  # 6050 não é parcial
+    assert "2 alturas" in retomar(c, "2 2 6000 6400 1 3600").resumo  # o violino tem 3 notas (com a ligadura)
+    assert "sem solução" in retomar(c, "-1").resumo and c.pendente is not None
+
+
+def test_cluster_engine_problema_sem_dominio_nao_vai_ao_openmusic(tmp_path):
+    c, r, _ = _cluster(tmp_path, fundamental=2400, parciais=2)  # 2400 e 3600: o violino não alcança nenhum
+    assert r.tarefa is None and "Violino" in r.resumo and not any(tmp_path.iterdir())
+
+
+def test_cluster_engine_acorde_segue_a_altura_principal_dentro_dos_parciais(tmp_path):
+    c = _duo_com_ligadura()
+    v = c.atual.ir.partes[0].vozes[0].eventos[0]
+    v.alturas.append(Altura(midicents=7900))  # Dó 5 + Mi 5: corda dupla
+    plano = _plano("alturas_por_restricoes", {"fundamental": 3600, "parciais": 16, "microtom": 1})
+    c, r, _ = _rodar(plano, modo="openmusic", registro=COM_LIBS, composicao=c, pasta=tmp_path)
+    assert r.tarefa is not None, r.resumo
+    r2 = retomar(c, "2 3 6000 6400 6700 1 3600")
+    acorde = r2.versao.ir.partes[0].vozes[0].eventos[0].alturas
+    assert [a.midicents for a in acorde] == [6000, 6700]  # 6000 + 700 cents: o parcial mais perto é 6700

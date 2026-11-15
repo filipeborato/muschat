@@ -90,6 +90,7 @@ _BIBLIOTECAS_OM = {
     "OM2Csound": ("om2csound", ("csound",)),
     "OMChroma": ("omchroma", ()),  # escreve .orc/.sco; o áudio depende da capacidade Csound
     "OM-SuperVP": ("om-supervp", ("supervp",)),
+    "Cluster-Engine": ("cluster-engine", ()),
 }
 
 

@@ -174,6 +174,18 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
                                 unidade="midicents (5500 = Sol 3)"),
                   "passo": Faixa(50, 1200, 100, "distância entre alturas vizinhas", unidade="cents")},
                  None, requer_composicao=False),
+    Procedimento("alturas_por_restricoes", "Só no OpenMusic (Cluster Engine): mantém o ritmo da seleção e "
+                 "escolhe as alturas com um solver de restrições entre os parciais de uma fundamental, na tessitura "
+                 "de cada parte (bom depois do NotaGen: o ritmo dele, alturas espectrais com regras).",
+                 {"fundamental": Faixa(2400, 6000, 3600, "fundamental", unidade="midicents (3600 = Dó 2)"),
+                  "parciais": Faixa(2, 32, 16, "quantos parciais (1..n)"),
+                  "microtom": Faixa(0, 2, 1, "aproximação: 0 semitom, 1 quarto de tom, 2 oitavo de tom"),
+                  "salto_maximo": Faixa(100, 2400, 700, "maior intervalo entre notas seguidas de uma voz",
+                                        unidade="cents"),
+                  "sem_unissono": Faixa(0, 1, 1, "1 = alturas simultâneas todas diferentes"),
+                  "sem_cruzamento": Faixa(0, 1, 1, "1 = a parte de cima nunca soa abaixo da de baixo"),
+                  "notas_comuns": Faixa(0, 1, 1, "1 = preferir repetir a altura anterior quando ela serve")},
+                 None),
     Procedimento("sintese_aditiva", "Só no OpenMusic (OMChroma + Csound): as notas da seleção controlam uma "
                  "síntese aditiva; cada nota vira parciais harmônicos cuja quantidade cresce do início ao fim. Gera "
                  ".orc/.sco (e áudio, com Csound) e acrescenta uma parte eletrônica (cues e curva, não notas).",

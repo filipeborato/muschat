@@ -54,7 +54,7 @@ def espectralizar(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], r
         faixa, cabem = faixas[parte.id]
         linha = _contorno([n.alturas[0].midicents for n in notas], faixa, cabem, salto)
         novas = {n.id: n.model_copy(update={"alturas": [ir.Altura(midicents=a, grafia=grafias[a])
-                                                     for a in _acorde(n, alto, cabem)]})
+                                                     for a in acorde_sobre(n, alto, cabem)]})
                  for n, alto in zip(notas, linha)}
         return [novas.get(e.id, e) for e in alvo]
 
@@ -101,7 +101,7 @@ def _contorno(original: list[int], faixa: list[int], cabem: list[int], salto: in
     return linha
 
 
-def _acorde(nota: ir.Nota, alto: int, cabem: list[int]) -> list[int]:
+def acorde_sobre(nota: ir.Nota, alto: int, cabem: list[int]) -> list[int]:
     """A primeira altura vira `alto`; as outras do acorde, os parciais mais perto dos mesmos intervalos."""
     base = nota.alturas[0].midicents
     alturas = [alto]

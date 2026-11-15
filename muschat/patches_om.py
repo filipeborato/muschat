@@ -16,10 +16,13 @@ from fractions import Fraction
 from pathlib import Path
 
 from muschat import musicir as ir
-from muschat.instrumentos import instrumento
+from muschat.instrumentos import instrumento, tessitura_da_parte
 from muschat.plano import Plano
-from muschat.procedimentos.comum import DINAMICAS, QUARTETO, Grade, Ids, com_alturas, exigir, por_compasso
-from muschat.procedimentos.espectrais import grafias_dos_parciais
+from muschat.musicir import ligam
+from muschat.procedimentos.comum import (
+    DINAMICAS, QUARTETO, Grade, Ids, com_alturas, exigir, por_compasso, trocar_vozes,
+)
+from muschat.procedimentos.espectrais import acorde_sobre, grafias_dos_parciais, parciais
 from muschat.procedimentos.progressivos import densidade_por_compasso
 from muschat.restricoes import Restricao, verificar
 
@@ -98,6 +101,104 @@ def material(alturas: list[int], *, titulo: str, proveniencia: ir.Proveniencia) 
 
 def _compassos(n: int) -> list[ir.Compasso]:
     return [ir.Compasso(numerador=4, denominador=4, andamento=60 if k == 0 else None) for k in range(n)]
+
+
+# --- Cluster Engine: alturas por restrições sobre o ritmo existente ------------------------------------------------
+
+LIMITE_ATAQUES_CE = 400  # ataques no trecho; acima disso a busca do Cluster Engine fica longa demais para o OM
+
+
+@dataclass(frozen=True)
+class _VozCE:
+    parte: ir.Parte
+    ritmo: list[Fraction]  # durações em ordem; negativas = pausas; notas ligadas já somadas
+    cadeias: list[list[ir.Nota]]  # uma por ataque: as notas que recebem a mesma altura (ligadura); acorde = a 1ª
+    dominio: list[int]
+
+
+def _vozes_ce(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None) -> list[_VozCE]:
+    """As vozes da seleção com o ritmo fixo e o domínio (parciais na tessitura); mesma ordem na ida e na volta."""
+    atual, primeiro, ultimo = _trecho(atual, plano)
+    grade, sel = Grade(atual), plano.selecao  # type: ignore[union-attr]
+    ini, fim = grade.inicios[primeiro - 1], grade.fins[ultimo - 1]
+    espectro = sorted(set(parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))))
+    vozes = []
+    for parte in atual.partes:
+        tessitura = tessitura_da_parte(parte)
+        if (sel.partes and parte.id not in sel.partes) or (tessitura and tessitura[0] == tessitura[1]):
+            continue  # fora da seleção, ou percussão sem altura
+        for voz in parte.vozes:
+            eventos = [e for e in voz.eventos if isinstance(e, (ir.Nota, ir.Pausa)) and ini <= e.inicio < fim
+                       and (not sel.vozes or voz.id in sel.vozes)]
+            if not any(isinstance(e, ir.Nota) for e in eventos):
+                continue
+            ritmo: list[Fraction] = []
+            cadeias: list[list[ir.Nota]] = []
+            cursor, anterior = ini, None
+            for e in eventos:
+                if e.inicio > cursor:
+                    ritmo.append(-(e.inicio - cursor))
+                if isinstance(e, ir.Nota) and isinstance(anterior, ir.Nota) and ligam(anterior, e):
+                    cadeias[-1].append(e)
+                    ritmo[-1] += e.duracao
+                elif isinstance(e, ir.Nota):
+                    cadeias.append([e])
+                    ritmo.append(e.duracao)
+                else:
+                    ritmo.append(-e.duracao)
+                cursor, anterior = e.fim, e
+            dominio = [a for a in espectro if tessitura is None or tessitura[0] <= a <= tessitura[1]]
+            if not dominio:
+                raise ValueError(f"{parte.instrumento}: nenhum parcial na tessitura; nada enviado ao OpenMusic")
+            vozes.append(_VozCE(parte, ritmo, cadeias, dominio))
+    if not vozes:
+        raise ValueError("a seleção não tem notas para o Cluster Engine")
+    return vozes
+
+
+def _ce_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None) -> str:
+    """Problema impossível não vai ao OpenMusic (a busca pode travar o app): conferido aqui antes."""
+    vozes = _vozes_ce(p, atual, plano)
+    if p["sem_unissono"] and len({a for v in vozes for a in v.dominio}) < len(vozes):
+        raise ValueError(f"sem uníssono pede pelo menos {len(vozes)} alturas diferentes entre as vozes; nada enviado")
+    if (ataques := sum(len(v.cadeias) for v in vozes)) > LIMITE_ATAQUES_CE:
+        raise ValueError(f"{ataques} ataques no trecho; o limite é {LIMITE_ATAQUES_CE} (selecione menos compassos)")
+    atual, primeiro, _ = _trecho(atual, plano)
+    c = atual.compassos[primeiro - 1]
+    regras = [int(p[k]) for k in ("salto_maximo", "sem_unissono", "sem_cruzamento", "notas_comuns")]
+    texto = f"{len(vozes)} {' '.join(map(str, regras))} {max(len(v.cadeias) for v in vozes) + 1}\n"
+    texto += f"{c.numerador} {c.denominador}\n"
+    for v in vozes:
+        texto += f"{len(v.ritmo)} " + " ".join(f"{d.numerator} {d.denominator}" for d in v.ritmo) + "\n"
+        texto += f"{len(v.dominio)} {' '.join(map(str, v.dominio))}\n"
+    return texto
+
+
+def _ce_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
+    """V, depois por voz k e as k alturas: as primeiras vão para os ataques, em ordem (o solver pode devolver a
+    mais, quando repete o motivo de ritmo); a ligadura recebe a mesma altura."""
+    if valores == [SEM_SOLUCAO]:
+        raise ValueError("sem solução: o Cluster Engine não achou alturas que cumpram essas regras (afrouxe o salto ou "
+                         "desligue uma regra)")
+    vozes = _vozes_ce(ctx.parametros, ctx.atual, ctx.plano)
+    numeros = [int(x) for x in valores]
+    if not numeros or numeros[0] != len(vozes):
+        raise ValueError(f"a saída anuncia {numeros[:1]} vozes; a tarefa tinha {len(vozes)}")
+    pos, novas = 1, {}
+    for v in vozes:
+        if pos >= len(numeros) or len(numeros) < pos + 1 + numeros[pos]:
+            raise ValueError(f"{v.parte.instrumento}: a saída termina antes das alturas anunciadas")
+        k, alturas = numeros[pos], numeros[pos + 1:pos + 1 + numeros[pos]]
+        pos += 1 + k
+        if k < len(v.cadeias):
+            raise ValueError(f"{v.parte.instrumento}: o solver devolveu {k} alturas para {len(v.cadeias)} notas")
+        if fora := [a for a in alturas[:len(v.cadeias)] if a not in v.dominio]:
+            raise ValueError(f"{v.parte.instrumento}: {fora[:3]} fora das alturas permitidas")
+        # o solver decide a altura principal; as outras do acorde seguem o mesmo intervalo, dentro do domínio
+        novas |= {n.id: com_alturas(n, acorde_sobre(n, a, v.dominio)) for cadeia, a in zip(v.cadeias, alturas)
+                  for n in cadeia}
+    return trocar_vozes(exigir(ctx.atual), lambda parte, voz: voz.model_copy(update={"eventos": [
+        novas.get(e.id, e) for e in voz.eventos]}))
 
 
 # --- Esquisse: série harmônica -----------------------------------------------------------------------------------------
@@ -552,5 +653,16 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="uma linha: parciais quadros",
         saida="saida.txt: N seguido de N trincas tempo (s) frequência (Hz) amplitude",
         passos=_passos("analise_supervp.lisp"),
-        montar=_supervp_montar, ler=_supervp_ler, autor="OpenMusic/OM-SuperVP"),  # sem arquivo: SuperVP não disponível para validar o patch
+        montar=_supervp_montar, ler=_supervp_ler, autor="OpenMusic/OM-SuperVP"),
+    PatchAprovado(
+        procedimento="alturas_por_restricoes", biblioteca="cluster-engine",
+        funcao_om="ClusterEngine + R-pitches-one-voice, R-pitch-pitch, HR-pitches-one-voice",
+        descricao="Cluster Engine (Sandred; porte para OM de P. Raposo): o ritmo de cada voz da seleção fica; o "
+                  "solver escolhe as alturas entre os parciais da fundamental, com salto máximo por voz, sem "
+                  "uníssono e sem cruzamento entre as vozes e preferência por notas comuns.",
+        entrada="V S U C H M; NUM DEN; por voz: E e os pares n d do ritmo (n < 0 = pausa); D e as alturas possíveis",
+        saida="saida.txt: V e, por voz, k seguido das k alturas das notas; -1 se não houver solução",
+        passos=_passos("alturas_por_restricoes.lisp", " A busca pode levar alguns segundos."),
+        montar=_ce_montar, ler=_ce_ler, autor="OpenMusic/Cluster Engine",
+        arquivo="patches/alturas_por_restricoes.lisp"),  # validado só depois de rodar no OM real (ticket 09)  # sem arquivo: SuperVP não disponível para validar o patch
 ]}
