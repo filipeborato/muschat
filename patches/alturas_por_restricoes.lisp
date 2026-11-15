@@ -50,19 +50,33 @@
 ;; compila uma closure ("... is a lexical closure", visto no OM real). O salto vem por variável especial.
 (defvar *muschat-ce-salto* 1200)
 
+;; Prazo da busca: o Cluster Engine não tem limite de tempo e uma busca grande trava o OpenMusic (visto no teste
+;; real). Toda regra confere o relógio; passado o prazo, o erro sai da busca e vira -2 + erro.txt.
+(defvar *muschat-ce-prazo* 0)
+(defparameter *muschat-ce-segundos* 60)
+
+(defun muschat-ce-relogio ()
+  (when (> (get-internal-real-time) *muschat-ce-prazo*)
+    (error "o Cluster Engine passou de ~D s sem achar solução; diminua o trecho ou desligue uma regra"
+           *muschat-ce-segundos*)))
+
 (defun muschat-ce-salto-ok (a b)
+  (muschat-ce-relogio)
   (<= (abs (- b a)) *muschat-ce-salto*))
 
 (defun muschat-ce-repete (a b)
   "Heurística das notas comuns: peso 1 quando a altura se repete."
+  (muschat-ce-relogio)
   (if (= a b) 1 0))
 
 (defun muschat-ce-decrescente (alturas)
   "Sem cruzamento: as vozes vêm de cima para baixo; pausas (nil) não contam."
+  (muschat-ce-relogio)
   (let ((soando (remove nil alturas)))
     (or (null soando) (apply #'>= soando))))
 
 (defun muschat-ce-sem-unissono (alturas)
+  (muschat-ce-relogio)
   (let ((soando (remove nil alturas)))
     (= (length soando) (length (remove-duplicates soando)))))
 
@@ -77,6 +91,8 @@
                              append (list (list ritmo) (mapcar #'list dominio))))
              (todas (loop for i below v collect i))
              (*muschat-ce-salto* salto)
+             (*muschat-ce-prazo* (+ (get-internal-real-time)
+                                    (* *muschat-ce-segundos* internal-time-units-per-second)))
              (regras
                (append
                 ;; cada regra devolve uma lista de regras; a lista final tem de ser plana (filter-rules-from-input)
