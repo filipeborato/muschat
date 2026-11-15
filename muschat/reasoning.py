@@ -17,7 +17,7 @@ from muschat.notacao.lilypond import para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.tecnicas import TECNICAS
 from muschat.notagen import Compositor
-from muschat.orquestrador import compor, retomar
+from muschat.orquestrador import compor, retomar, resumir
 from muschat.registro import Registro
 from muschat.roteador import Modo
 from muschat.seguranca import neutralizar as _neutralizar
@@ -161,6 +161,7 @@ def responder(
                 "A composição ainda não foi concluída.", analise.model_dump(), trechos, False)
         if resultado.versao is None:
             return Resposta(resultado.resumo, analise.model_dump(), trechos, False)
+        operacao += "\nInventário da partitura efetivamente gerada:\n" + resumir(resultado.versao.ir)
     else:
         partituras = _partituras(pergunta_segura, analise, trechos, gerador=gerador, chat=chat, modelo=modelo)
 

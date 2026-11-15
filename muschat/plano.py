@@ -57,6 +57,8 @@ class Secao(BaseModel):
 
 
 class Plano(BaseModel):
+    receita: str = Field(default="", description="Nome da receita estética do catálogo, ou vazio.")
+    motivo_receita: str = Field(default="", description="Por que essa cadeia atende ao pedido; não é imitação.")
     secoes: list[Secao] = Field(default_factory=list)
     objetivo: str
     instrumentos: list[str] = Field(default_factory=list, max_length=16,

@@ -46,8 +46,9 @@ class Grade:
         return pedacos(self.inicios, inicio, duracao)
 
 
-# shortcut: a MusicIR não tem ligadura; um evento cortado na barra vira dois ataques. Evoluir com `ligada` na Nota.
-def repartir(e: ir.Evento, inicio: Fraction, duracao: Fraction, grade: Grade, ids: Ids) -> list[ir.Evento]:
+# Por padrão conserva a articulação antiga; sustentar liga fragmentos de um único som.
+def repartir(e: ir.Evento, inicio: Fraction, duracao: Fraction, grade: Grade, ids: Ids,
+             *, sustentar: bool = False) -> list[ir.Evento]:
     """Evento movido/redimensionado em figuras notáveis; o primeiro pedaço mantém o id, a dinâmica e o texto."""
     pedacos = grade.pedacos(inicio, duracao)
     saida: list[ir.Evento] = []
@@ -57,6 +58,8 @@ def repartir(e: ir.Evento, inicio: Fraction, duracao: Fraction, grade: Grade, id
             campos |= {"dinamica": None, "texto": None}
         if k < len(pedacos) - 1 and isinstance(e, ir.Nota):
             campos["glissando"] = False
+            if sustentar:
+                campos["ligada"] = True
         saida.append(e.model_copy(update=campos))
     return saida
 

@@ -17,6 +17,7 @@ from muschat.exportacao import metricas
 from muschat.notacao.lilypond import detectar, gravar, para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.orquestrador import compor
+from muschat.receitas import RECEITAS
 
 PASTA = Path(".muschat") / "referencias"
 
@@ -82,6 +83,9 @@ class _SemHistorico:
     def get_history(self) -> list:
         return []
 
+    def send_message(self, message: str, config=None):
+        raise AssertionError("referências não usam síntese de resposta")
+
 
 def gerar(rotulo: str, *, raiz: Path = PASTA, lilypond=None) -> Path:
     """Gera todas as peças sob raiz/rotulo; levanta RuntimeError se alguma for recusada (a linha de base precisa
@@ -107,7 +111,48 @@ def gerar(rotulo: str, *, raiz: Path = PASTA, lilypond=None) -> Path:
     return pasta
 
 
+def gerar_receitas(rotulo: str, *, raiz: Path = PASTA, lilypond=None) -> Path:
+    """Aplica cada receita à mesma base de cada peça; conserva antes/depois para leitura e escuta."""
+    pasta = raiz / rotulo
+    pasta.mkdir(parents=True, exist_ok=True)
+    todas, checklist = {}, [f"# Receitas: {rotulo}\n"]
+    for nome, pedido, plano in PECAS:
+        base = Composicao()
+        resultado = compor(pedido, base, gerador=_PlanoFixo({"objetivo": pedido, **plano}),
+                           chat=_SemHistorico(), modelo="plano-fixo-sem-LLM")
+        if resultado.versao is None:
+            raise RuntimeError(resultado.resumo)
+        original = resultado.versao.ir
+        for receita in RECEITAS:
+            composicao = Composicao()
+            composicao.adicionar(original, "referência original", {}, anterior=None)
+            cadeia = RECEITAS[receita].cadeia
+            transformacao = {"objetivo": receita, "receita": receita, "motivo_receita": "comparação com a referência",
+                            "semente": plano["semente"], "operacoes": [_op(op, **params) for op, params in cadeia]}
+            resultado = compor(receita, composicao, gerador=_PlanoFixo(transformacao),
+                               chat=_SemHistorico(), modelo="plano-fixo-sem-LLM")
+            if resultado.versao is None:
+                raise RuntimeError(f"{nome}/{receita}: {resultado.resumo}")
+            ir = resultado.versao.ir
+            chave = f"{nome}-{receita}"
+            (pasta / f"{chave}.musicxml").write_text(para_musicxml(ir), encoding="utf-8")
+            (pasta / f"{chave}.json").write_text(composicao.para_json(), encoding="utf-8")
+            fontes = para_lilypond(ir)
+            (pasta / f"{chave}.ly").write_text(fontes["grade"], encoding="utf-8")
+            if lilypond:
+                gravacao = gravar({"grade": fontes["grade"]}, lilypond)
+                if gravacao.aviso:
+                    raise RuntimeError(f"{chave}: {gravacao.aviso}")
+                (pasta / f"{chave}.pdf").write_bytes(gravacao.pdfs["grade"])
+            todas[chave] = {"antes": metricas(original), "depois": metricas(ir)}
+            checklist.append(f"## {chave}\n\n{CHECKLIST}")
+    (pasta / "metricas.json").write_text(json.dumps(todas, ensure_ascii=False, indent=2), encoding="utf-8")
+    (pasta / "checklist.md").write_text("\n".join(checklist), encoding="utf-8")
+    return pasta
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("uso: uv run python -m muschat.referencias <rótulo>   (ex.: linha-de-base)")
-    print(gerar(sys.argv[1], lilypond=detectar()).resolve())
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--receitas"):
+        sys.exit("uso: uv run python -m muschat.referencias <rótulo> [--receitas]")
+    gerar_conjunto = gerar_receitas if len(sys.argv) == 3 else gerar
+    print(gerar_conjunto(sys.argv[1], lilypond=detectar()).resolve())

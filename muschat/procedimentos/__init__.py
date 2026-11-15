@@ -18,6 +18,8 @@ from muschat.procedimentos.progressivos import (
     aplicar_tecnicas, densidade, dinamica_progressiva, registro_progressivo, tecnicas_por_gesto,
 )
 from muschat.procedimentos.ritmicos import aumentacao_diminuicao, permutar_duracoes, subdividir
+from muschat.procedimentos.contemporaneos import desafinar, substituir_timbre, rarefazer
+from muschat.procedimentos.texturas import micropolifonia, deformar_ritmo
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,34 @@ _VERHULST = {"x0": Faixa(0.01, 0.99, 0.1, "valor inicial da série (população 
              "turbulencia": Faixa(0, 3, 2.8, "lambda de Verhulst: acima de ~2.57 o processo é caótico", inteiro=False)}
 
 CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
+    Procedimento("desafinar", "Desvio microtonal em rampa ou oscilação; glissandos dentro do gesto, sem mudar ritmo.", {
+        "desvio": Faixa(0, 200, 100, "desvio máximo", unidade="cents"),
+        "resolucao": Faixa(1, 2, 1, "1 = quarto de tom, 2 = oitavo de tom"),
+        "curva": Faixa(0, 1, 0, "0 = rampa, 1 = oscilação completa"),
+        "glissandos": Faixa(0, 1, 0.5, "proporção de ligações dentro do gesto", inteiro=False)}, desafinar),
+    Procedimento("substituir_timbre", "Troca notas por ruído idiomático, mantendo ritmo e dinâmica. "
+                 "tecnicas no plano restringe as opções de ruído.", {
+        "inicial": Faixa(0, 1, 0.2, "proporção inicial", inteiro=False),
+        "final": Faixa(0, 1, 0.8, "proporção final", inteiro=False),
+        "familia_ruido": Faixa(0, 3, 0, "0 = todas, 1 = fricção, 2 = percussivo, 3 = ar")}, substituir_timbre),
+    Procedimento("rarefazer", "Remove ataques, prolonga notas com ligaduras, harmônicos naturais ou whistle tones "
+                 "tocáveis e dinâmica extrema; prolongamentos respeitam os grupos de quiálteras.", {
+        "manter": Faixa(0, 1, 0.3, "proporção de notas mantidas", inteiro=False),
+        "harmonicos": Faixa(0, 1, 0.5, "proporção de conversão", inteiro=False),
+        "dinamica": Faixa(0, 1, 0, "0 = pppp, 1 = ppp"),
+        "acentos": Faixa(0, 0.2, 0.03, "proporção de acentos raros", inteiro=False)}, rarefazer),
+    Procedimento("micropolifonia", "Cânone próximo da primeira voz da origem nas vozes selecionadas; "
+                 "defasagem, variação de duração e espalhamento microtonal. A cauda é limitada ao trecho.", {
+        "parte_origem": Faixa(1, 16, 1, "número da parte de origem"),
+        "defasagem": Faixa(0, 8, 1, "atraso por voz", unidade="semicolcheias"),
+        "variacao": Faixa(0, 2, 1, "variação máxima da escala temporal em passos de 1/16"),
+        "espalhamento": Faixa(0, 1200, 150, "largura total do cluster entre vozes", unidade="cents")}, micropolifonia),
+    Procedimento("deformar_ritmo", "Deforma gestos em quiálteras dentro da barra, conservando notas e ordem; "
+                 "o espaço restante vira respiração. Fatores são aproximados às figuras que cabem, sem cortar notas.", {
+        "proporcao": Faixa(0, 1, 0.6, "proporção de gestos", inteiro=False),
+        "quialteras": Faixa(1, 15, 15, "máscara somada: 1 = 5:4, 2 = 7:4, 4 = 6:4, 8 = 5:6"),
+        "minimo": Faixa(0.25, 2, 0.5, "fator mínimo desejado", inteiro=False),
+        "maximo": Faixa(0.25, 2, 1, "fator máximo desejado", inteiro=False)}, deformar_ritmo),
     Procedimento(
         "serie_harmonica",
         "Cria uma peça nova (substitui a atual): alturas dos parciais harmônicos de uma fundamental, distribuídas "

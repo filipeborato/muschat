@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from muschat import prompts
 from muschat.composicao import Composicao, Pendencia, Versao
 from muschat.instrumentos import FAMILIAS, INSTRUMENTOS, instrumento
-from muschat.musicir import MusicIR, Origem, Parte, Proveniencia, comparar, localizar
+from muschat.musicir import MusicIR, Nota, Origem, Parte, Proveniencia, comparar, localizar
 from muschat.notagen import Compositor
 from muschat.notacao.musicxml import de_musicxml, para_musicxml
 from muschat.notacao.tecnicas import tecnicas_da_familia, tecnicas_intocaveis
@@ -31,6 +31,7 @@ from muschat.registro import NOME_DO_MOTOR, Registro
 from muschat.restricoes import verificar
 from muschat.roteador import MODOS, Etapa, Modo, SemRota, rotear
 from muschat.seguranca import neutralizar
+from muschat.receitas import expandir, documentacao as receitas_no_prompt
 
 if TYPE_CHECKING:
     from muschat.reasoning import Gerador, SessaoChat
@@ -168,6 +169,10 @@ def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: 
              reuso: dict[int, str] | None = None) -> Resultado:
     atual = None if base is None else composicao.versoes[base].ir
     try:
+        try:
+            plano = expandir(plano)
+        except ValueError as exc:
+            raise Recusa(str(exc)) from exc
         efetivo = plano.motor if modo == "automatico" else modo
         if (efetivo == "hibrido" and plano.instrumentos
                 and any(o.procedimento == "serie_harmonica" for o in plano.operacoes)):
@@ -279,9 +284,12 @@ def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dic
     passos = ", ".join(f"{e.procedimento}[{NOME_DO_MOTOR[e.motor]}]({_texto(p, catalogo[e.procedimento])})"
                        for e, p in zip(ctx.decisao.etapas, ctx.parametros))
     plano = ctx.plano
+    silenciosas = [f"{p.id} ({p.instrumento})" for p in nova.partes
+                   if not any(isinstance(e, Nota) for v in p.vozes for e in v.eventos)]
     resumo = (f"Versão {len(composicao.versoes) + 1}: {passos}, semente {ctx.semente}, modo "
               f"{MODOS[ctx.decisao.modo]}; {len(nova.partes)} partes, {len(nova.compassos)} compassos"
               + ("" if plano.selecao.total else f"; seleção {plano.selecao.model_dump(exclude_defaults=True)}")
+              + (f"; partes sem notas: {', '.join(silenciosas)}" if silenciosas else "")
               + "".join(f"; hipótese: {neutralizar(h)}" for h in plano.hipoteses)
               + (f"; restrições violadas ({len(violacoes)}): {'; '.join(violacoes[:5])}" if violacoes
                  else "; restrições cumpridas")
@@ -318,6 +326,21 @@ def _conferir(plano: Plano, antes: MusicIR | None, nova: MusicIR, *, origem: Ori
         return _carimbar(nova, {e.id for _, _, e in nova.eventos()}, origem, operacao)
     dif = comparar(antes, nova)
     la, ld = localizar(antes), localizar(nova)
+    # Quiálteras pertencem aos eventos: uma edição local não altera a voz inteira.
+    for parte in antes.partes:
+        for voz in parte.vozes:
+            if dif.alterados.get(voz.id) != ["quialteras"]:
+                continue
+            depois = next(v for p in nova.partes for v in p.vozes if v.id == voz.id)
+            a, b = {q.id: q for q in voz.quialteras}, {q.id: q for q in depois.quialteras}
+            mudadas = {chave for chave in a.keys() | b.keys() if a.get(chave) != b.get(chave)}
+            while filhas := {q.id for q in [*a.values(), *b.values()] if q.pai in mudadas} - mudadas:
+                mudadas |= filhas
+            membros = {i for chave in mudadas
+                       for q in (a.get(chave), b.get(chave)) if q for i in q.eventos}
+            if all(plano.selecao.contem(*local) for i in membros
+                   for local in (la.get(i), ld.get(i)) if local):
+                del dif.alterados[voz.id]
     fora = sorted({i for i in [*dif.adicionados, *dif.removidos, *dif.alterados]
                    for local in (la.get(i), ld.get(i)) if local and not plano.selecao.contem(*local)})
     cabecalho = (antes.titulo, antes.compositor) != (nova.titulo, nova.compositor)
@@ -423,7 +446,8 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         contents=[*chat.get_history(), types.Content(role="user", parts=[types.Part(text=texto)])],
         config=types.GenerateContentConfig(
             system_instruction=prompts.PLANO.format(
-                catalogo=_catalogo_no_prompt(catalogo, registro, modo),
+                catalogo=_catalogo_no_prompt(catalogo, registro, modo) + (
+                    "\n" + receitas_no_prompt() if modo != "openmusic" else ""),
                 instrumentos="; ".join(f"{f}: {', '.join(n for n, i in INSTRUMENTOS.items() if i.familia == f)}"
                                        for f in FAMILIAS),
                 tecnicas="; ".join(f"{f}: {', '.join(tecnicas_da_familia(f))}" for f in FAMILIAS),
@@ -497,7 +521,10 @@ def resumir(ir: MusicIR | None) -> str:
     linhas = [f"título: {ir.titulo}", f"compassos: {len(ir.compassos)} ({', '.join(metricas)})", "partes:"]
     for p in ir.partes:
         vozes = ", ".join(f"{v.id} ({len(v.eventos)} eventos)" for v in p.vozes)
-        linhas.append(f"- {p.id}: {p.instrumento}; vozes {vozes}")
+        notas = [e for v in p.vozes for e in v.eventos if isinstance(e, Nota)]
+        tecnicas = sorted({t for e in notas for t in e.tecnicas})
+        linhas.append(f"- {p.id}: {p.instrumento}; vozes {vozes}; {len(notas)} notas; "
+                      f"técnicas efetivas: {', '.join(tecnicas) or 'nenhuma'}")
     return neutralizar("\n".join(linhas))
 
 

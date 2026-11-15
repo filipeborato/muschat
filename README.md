@@ -1,5 +1,16 @@
 # Muschat
 
+### Receitas estéticas
+
+As [receitas documentadas](docs/receitas.md) são cadeias de transformações ajustáveis para material novo
+do NotaGen ou composições existentes. São pontos de partida por referência estética, não imitações de
+compositores. O plano registra a receita e sua hipótese; os parâmetros continuam editáveis na interface.
+A tabela em `muschat/receitas.py` alimenta o prompt e gera a documentação com `uv run python -m muschat.receitas`.
+Scelsi explora desvios e glissandos; Lachenmann, ruído instrumental; Sciarrino, silêncio e harmônicos;
+Ligeti, cânones próximos; espectral, parciais; ritmo elástico, quiálteras e respirações.
+Gere as 24 comparações sobre as quatro peças de referência com
+`uv run python -m muschat.referencias camada-contemporanea --receitas` (MusicXML, JSON, métricas e PDF com LilyPond).
+
 A proof-of-concept chat assistant for composers and performers working with **contemporary concert music, electroacoustic music and extended techniques**.
 
 Generic chatbots tend to answer shallowly on this niche: they invent references and are vague about how to actually *write* a multiphonic, a *sul ponticello* passage or a live-electronics setup. Muschat is a focused alternative: it stays on its domain, answers with practical performance and notation detail, admits uncertainty instead of making things up, and politely declines anything off-topic.

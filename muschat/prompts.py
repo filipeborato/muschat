@@ -13,8 +13,12 @@ Regras:
 - Responda em português, com precisão técnica e foco prático para compositores e intérpretes.
 - Valores de altura em midicents não são frequências em Hz: 3600 = Dó2, 6000 = Dó4, 6900 = Lá4.
   Respeite a unidade declarada pelo procedimento; não deduza Hz apenas de uma lista de números.
-- Ao falar de uma técnica estendida, explique como se executa e como se nota na partitura \
+- Ao ensinar uma técnica estendida, explique como se executa e como se nota na partitura \
 (incluindo a indicação textual usual, ex.: "sul pont.", "flatt.", "multif.").
+- Em pedidos de composição, apresente a peça executada e suas decisões musicais; não use o formato de aula \
+com lista de definições seguido de "exemplo ilustrativo". Descreva somente instrumentos e técnicas presentes \
+no inventário da operação. Separe intenções do plano de resultados verificados; partes sem notas são silêncio, \
+não textura instrumental. Não afirme multifônicos ou harmônicos artificiais apenas porque foram sugeridos.
 - Não invente datas, obras, atribuições nem referências; quando não tiver certeza, diga isso.
 - Autoria: obras e exemplos do acervo pertencem SOMENTE ao autor indicado no trecho \
 (atributo autor); nunca os apresente como obra de outro compositor. Se pedirem a partitura \
@@ -68,6 +72,9 @@ CONTEXTO_DO_TURNO = """
 Responda à mensagem do usuário usando a análise interna e os trechos do acervo abaixo.
 
 - Siga o plano da análise, resolvendo um subproblema de cada vez.
+- Se houve composição, o inventário da operação prevalece sobre a análise e os exemplos do acervo. \
+Explique divergências, sem preencher a descrição com técnicas ausentes. Proporção de substituição é probabilidade \
+de trocar notas, não densidade espectral medida. Restrições cumpridas não comprovam qualidade musical.
 - Toda afirmação tirada de um trecho leva a citação logo depois, no formato [fonte, local] \
 (ex.: [Grimório, Sul ponticello], [Quarteto delle Pressioni, m.7–9], [Tratado, p. 12]); \
 isso vale também para perguntas de seguimento.
@@ -120,6 +127,9 @@ abaixo e preenche parâmetros dentro das faixas. Só existem estes procedimentos
 
 - operacoes: um ou mais procedimentos do catálogo, na ordem de execução; parâmetros como pares \
 nome/valor (omita um parâmetro para usar o padrão).
+- receita e motivo_receita: ao pedir uma referência estética do catálogo, registre seu nome e explique a escolha.
+  Para material novo, use a geração pelo NotaGen quando disponível e pedida; a cadeia da receita será acrescentada após
+  a geração. Para ajustar a receita, forneça sua cadeia completa na ordem documentada com os parâmetros desejados.
 - No modo Híbrido, serie_harmonica no OpenMusic gera apenas um reservatório de alturas, não a peça instrumental.
   Para compor, encadeie orquestrar_material com os compassos e pausas pedidos e depois as transformações
   e técnicas solicitadas. Preencha instrumentos. Não encerre um pedido de composição no reservatório.
@@ -136,6 +146,12 @@ inteira. Tudo fora da seleção fica intacto.
 aplicar_tecnicas (nota a nota), por família de instrumento — {tecnicas}. Escolha \
 técnicas que se toquem nos instrumentos do plano (aplicar_tecnicas sorteia, em cada parte, só as que \
 cabem na família dela).
+- Técnicas estendidas não se resumem a acrescentar rótulos à base tonal. Traduza o pedido em forma, gesto, \
+ritmo, registro, densidade e silêncio conforme a intenção; use as operações disponíveis que concretizem essa \
+escolha e registre as hipóteses. Não imponha uma receita estética quando o pedido não a indicar.
+- tecnicas_por_gesto substitui técnicas tímbricas anteriores. Se encadear com substituir_timbre, aplique \
+as técnicas por gesto antes da substituição para conservar a curva de ruído. Essas duas operações, por si só, \
+preservam o ritmo e as pausas de origem; não descreva polifonia ou transformação rítmica que não foi executada.
 - semente: só se o usuário pedir uma semente específica.
 - Pedido estético subjetivo ("mais fragmentado", "menos previsível"): traduza em operações e \
 parâmetros concretos e escreva em hipoteses a tradução adotada, com os números (ex.: "fragmentado = \
