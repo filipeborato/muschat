@@ -400,7 +400,7 @@ def test_expanded_recipe_reapply_preserves_operations_and_score(monkeypatch):
     def unexpected_expansion(plan):
         raise AssertionError("expanded plans must not expand again")
 
-    monkeypatch.setattr("muschat.orchestrator.expand_recipe", unexpected_expansion)
+    monkeypatch.setattr("muschat.planning.expand_recipe", unexpected_expansion)
     result = reapply(c, original.experiment.parameters)
     assert result.version is not None, result.summary
     assert [o.procedure for o in result.version.experiment.plan.operations] == [o.procedure for o in original.experiment.plan.operations]

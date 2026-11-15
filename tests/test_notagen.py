@@ -144,14 +144,14 @@ def test_notagen_mode_requires_local_call_and_executes_transformation(tmp_path):
     result = compose(
         "compose",
         comp,
-        generator=FakeGenerator(_plan()),
+        generator=FakeGenerator(_plan(), _plan()),
         chat=FakeChat(),
         model="m",
         mode="notagen",
         registry=reg,
         composer=fake,
     )
-    assert result.version is None and "did not invoke" in result.summary and len(comp.versions) == 1
+    assert result.version is None and "even after correction" in result.summary and len(comp.versions) == 1
 
 
 def test_unknown_condition_is_refused_without_running_model(tmp_path):
@@ -348,3 +348,14 @@ def test_two_section_form_and_section_edit_preserves_first_section(tmp_path):
     edit["operations"][0]["section"] = "missing"
     assert run_plan(edit).version is None
     assert len(comp.versions) == 3
+
+
+def test_notagen_planner_retries_missing_generation_once(tmp_path):
+    plan = _plan("generate_notagen", parameters={"measures": 2}, instruments=["violin", "cello"])
+    plan["operations"][0]["condition"] = CONDITIONS[0]
+    generator = FakeGenerator(_plan(), plan)
+    fake = FakeComposer()
+    result = compose("compose", Composition(), generator=generator, chat=FakeChat(), model="m", mode="notagen", registry=_registry(_installation(tmp_path)), composer=fake)
+    assert result.version is not None, result.summary
+    assert len(generator.calls) == 2 and len(fake.calls) == 1
+    assert "CORRECTION" in generator.calls[1].config.system_instruction

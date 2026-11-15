@@ -17,3 +17,7 @@ def error_message(exc: Exception) -> str | None:
     if isinstance(exc, httpx2.TransportError):
         return "Falha de rede ao falar com o Gemini. Verifique sua conexão e tente de novo."
     return None
+
+
+class RefusalError(Exception):
+    """A composition operation cannot safely proceed."""

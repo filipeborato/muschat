@@ -165,7 +165,11 @@ def test_patch_failure_in_openmusic_reports_erro_txt(tmp_path):
 # --- OMChroma + Csound -------------------------------------------------------------------------------------------------
 
 
-def test_additive_synthesis_sends_partials_and_appends_electronic_part_without_notes(tmp_path):
+def test_additive_synthesis_sends_partials_and_appends_electronic_part_without_notes(tmp_path, monkeypatch):
+    def unexpected_render(*args, **kwargs):
+        raise AssertionError("parsing must not invoke Csound")
+
+    monkeypatch.setattr("muschat.audio.render_csound", unexpected_render)
     current = _quartet_score(2)
     notes_before = [e for _, _, e in current.events() if isinstance(e, Note)]
     params = _complete_params("additive_synthesis", {"initial_partials": 1, "final_partials": 3, "amplitude": -18})
@@ -179,7 +183,7 @@ def test_additive_synthesis_sends_partials_and_appends_electronic_part_without_n
     ir = import_output(task, str(n), operation="additive_synthesis", current=current, plan=plan)
     electronic = ir.parts[-1]
     assert electronic.instrument == "Electronics (additive synthesis)"
-    assert "muschat.orc" in electronic.voices[0].events[0].description
+    assert "audio" not in electronic.voices[0].events[0].description
     events = [e for voice in electronic.voices for e in voice.events]
     assert {e.kind for e in events} == {"electronic", "curve"}
     assert ir.parts[:4] == current.parts

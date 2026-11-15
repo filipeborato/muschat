@@ -333,6 +333,7 @@ class PendingTask(BaseModel):
     task: OmTask | None = None
     external_outputs: dict[int, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    audio: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod

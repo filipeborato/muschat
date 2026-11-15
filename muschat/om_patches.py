@@ -3,15 +3,13 @@
 """
 
 import math
-import os
 import random
-import shutil
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
+from muschat.audio import find_csound, render_csound
 from muschat.constraints import Constraint, check_constraints
 from muschat.instruments import instrument, part_range
 from muschat.plan import Plan
@@ -48,8 +46,6 @@ from muschat.score_ir import (
 NO_SOLUTION = -1.0
 PATCH_FAILED = -2.0
 MAX_COMPONENTS = 5000  # partials sent to OMChroma in a single task
-CSOUND_TIMEOUT = 300  # seconds
-MAX_AUDIO_BYTES = 200_000_000  # max accepted .wav size (~19 min mono 44.1 kHz/16-bit)
 MAX_CE_ATTACKS = 400
 SEARCH_LIMIT = 200_000
 
@@ -614,46 +610,11 @@ def _chroma_input(p: dict[str, float], current: ScoreIR | None, plan: Plan | Non
     return f"{len(comps)}\n" + "".join(f"{t:.6f} {d:.6f} {f:.6f} {a:.6f}\n" for t, d, f, a in comps)
 
 
-def find_csound(which: Callable[[str], str | None] = shutil.which) -> str | None:
-    """Return Csound executable path from CSOUND env var or PATH."""
-    return os.environ.get("CSOUND") or which("csound")
-
-
-def render_csound(directory: Path, executable: str | None, *, timeout: float = CSOUND_TIMEOUT) -> str:
-    """Render `muschat.orc` + `muschat.sco` -> `muschat.wav` with Csound; never raises, returns status description."""
-    orc, sco, wav = directory / "muschat.orc", directory / "muschat.sco", directory / "muschat.wav"
-    if not (orc.is_file() and sco.is_file()):
-        return "audio not rendered: OMChroma did not write muschat.orc/muschat.sco in the task directory"
-    if executable is None:
-        return "audio not rendered: Csound not found (install it or set CSOUND)"
-    try:
-        subprocess.run(
-            [executable, "-d", "-m0", "-W", "-o", wav.name, orc.name, sco.name],
-            cwd=directory,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=True,
-        )
-    except subprocess.TimeoutExpired:
-        return f"audio not rendered: Csound exceeded {timeout:g} s"
-    except (subprocess.CalledProcessError, OSError) as exc:
-        detail = " ".join(str(getattr(exc, "stderr", "") or exc).strip().splitlines()[-2:])
-        return f"audio not rendered: Csound failed ({detail})"
-    if not wav.is_file() or wav.stat().st_size == 0:
-        return "audio not rendered: Csound did not produce muschat.wav"
-    if wav.stat().st_size > MAX_AUDIO_BYTES:
-        wav.unlink()
-        return f"audio discarded: exceeded {MAX_AUDIO_BYTES // 1_000_000} MB"
-    return f"audio: muschat.wav in task directory ({directory.name})"
-
-
 def _chroma_output(values: list[float], ctx: PatchContext) -> ScoreIR:
     current = require_score(ctx.current)
     expected = int(ctx.input_text.split(maxsplit=1)[0])
     if values != [float(expected)]:
         raise ValueError(f"output should equal the number of synthesized partials ({expected}); got {values[:3]}")
-    audio = render_csound(ctx.directory, find_csound())
     notes = _selected_notes(current, ctx.plan)
     total = sum((m.length for m in current.measures), Fraction(0))
     p = ctx.parameters
@@ -672,7 +633,7 @@ def _chroma_output(values: list[float], ctx: PatchContext) -> ScoreIR:
                 start=onset,
                 duration=Fraction(0),
                 provenance=ctx.provenance,
-                description=desc + (f"; {audio}" if n == 0 else ""),
+                description=desc,
             )
         )
     curve = Curve(

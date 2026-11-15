@@ -133,7 +133,7 @@ def test_routing_decision_and_rationale_recorded(mode, registry, operations, exp
 
 def test_registry_detects_libraries_and_external_dependencies(tmp_path, monkeypatch):
     monkeypatch.delenv("CSOUND", raising=False)
-    monkeypatch.setattr("muschat.om_patches.os.path.isdir", lambda p: False)
+    monkeypatch.setattr("muschat.audio.os.path.isdir", lambda p: False)
     root = tmp_path / "OpenMusic 8.0"
     root.mkdir()
     (root / "OM 8.0.exe").write_bytes(b"")
