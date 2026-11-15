@@ -5,7 +5,7 @@ from collections.abc import Callable
 from fractions import Fraction
 
 from muschat import musicir as ir
-from muschat.notacao.tecnicas import cabe, problema
+from muschat.notacao.tecnicas import cabe, problema, tecnica
 from muschat.plano import Plano, Selecao
 from muschat.procedimentos.comum import (
     DINAMICAS, Grade, Ids, com_alturas, exigir, interpolar, pausa, por_compasso, por_voz,
@@ -118,11 +118,12 @@ def tecnicas_por_gesto(atual: ir.MusicIR | None, plano: Plano, p: dict[str, floa
         nonlocal tocaveis
         novas: dict[str, ir.Nota] = {}
         for gesto in ir.gestos(alvo):
-            possiveis = [t for t in plano.tecnicas if all(problema(t, parte.instrumento, n) is None for n in gesto)]
+            possiveis = [t for t in plano.tecnicas if all(problema(t, parte, n) is None for n in gesto)]
             tocaveis += bool(possiveis)
             if possiveis and rng.random() < p["proporcao"]:
                 escolhida = rng.choice(possiveis)
-                novas |= {n.id: n.model_copy(update={"tecnicas": [escolhida]}) for n in gesto}
+                novas |= {n.id: n.model_copy(update={"tecnicas": [  # articulações (staccato...) ficam
+                    *(t for t in n.tecnicas if tecnica(t).articulacao), escolhida]}) for n in gesto}
         return [novas.get(e.id, e) for e in alvo]
 
     novo = por_voz(atual, plano.selecao, trecho)

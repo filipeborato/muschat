@@ -66,12 +66,18 @@ def ligam(e: Nota, seguinte: object) -> bool:
             and [a.midicents for a in seguinte.alturas] == [a.midicents for a in e.alturas])
 
 
+NOTA_LONGA = Fraction(1, 2)  # mínima: uma nota assim fecha o gesto
+
+
 def gestos(eventos: list) -> list[list[Nota]]:
-    """Gestos (frases) de uma voz: notas seguidas, separadas por pausa ou pelo fim."""
+    """Gestos (frases) de uma voz: notas seguidas, separadas por pausa ou fechadas por uma nota longa (mínima ou
+    mais; ligada à seguinte não fecha, porque o som continua)."""
     saida: list[list[Nota]] = [[]]
     for e in eventos:
         if isinstance(e, Nota):
             saida[-1].append(e)
+            if e.duracao >= NOTA_LONGA and not e.ligada:
+                saida.append([])
         elif saida[-1]:
             saida.append([])
     return [g for g in saida if g]

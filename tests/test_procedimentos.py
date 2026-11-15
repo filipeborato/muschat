@@ -298,3 +298,21 @@ def test_rotulo_no_comeco_do_gesto_e_ord_so_na_volta(quarteto):
 def test_tecnica_que_nao_se_toca_em_nenhum_gesto_e_recusada(quarteto):
     with pytest.raises(ValueError, match="nenhum gesto"):
         _por_gesto(quarteto, ["whistle tone"])  # só flautas
+
+
+def test_espectralizar_so_exige_parciais_nas_partes_selecionadas():
+    duo = _rodar("serie_harmonica", instrumentos=["piccolo", "violoncelo"], compassos=2)
+    novo = _rodar("espectralizar", duo, selecao=Selecao(partes=["P2"]), fundamental=3600, parciais=4)
+    assert _alturas(novo, "P1") == _alturas(duo, "P1")
+    with pytest.raises(ValueError, match="Piccolo"):  # o piccolo não alcança Dó 2..Dó 4
+        _rodar("espectralizar", duo, fundamental=3600, parciais=4)
+
+
+def test_tecnicas_por_gesto_mantem_as_articulacoes(quarteto):
+    marcado = quarteto.model_copy(deep=True)
+    for _, _, e in marcado.eventos():
+        if isinstance(e, Nota):
+            e.tecnicas = ["staccato"]
+    novo, _ = _por_gesto(marcado, ["sul ponticello"], proporcao=1)
+    assert all("staccato" in n.tecnicas for n in _notas(novo))
+    assert any("sul ponticello" in n.tecnicas for n in _notas(novo))

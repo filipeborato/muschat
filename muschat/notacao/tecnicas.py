@@ -1,12 +1,11 @@
 """Tabela única de técnicas estendidas (vocabulário do grimório), compartilhada por todos os adaptadores."""
 
 import unicodedata
-from bisect import bisect_right
 from dataclasses import dataclass
 from fractions import Fraction
 
-from muschat.instrumentos import FAMILIAS, INSTRUMENTOS, Familia, identificar
-from muschat.musicir import MusicIR, Nota
+from muschat.instrumentos import FAMILIAS, INSTRUMENTOS, Familia, identificar, tessitura_da_parte
+from muschat.musicir import MusicIR, Nota, Parte, localizar
 
 
 @dataclass(frozen=True)
@@ -18,8 +17,9 @@ class Tecnica:
     articulacao: str | None = None  # nome MusicXML (<articulations>)
     familias: frozenset[Familia] = frozenset(FAMILIAS)  # onde a técnica se toca; padrão: qualquer instrumento
     so: frozenset[str] = frozenset()  # quando só alguns instrumentos da família tocam (chaves de INSTRUMENTOS)
-    # idiomatismo (tabela inicial, a revisar com o compositor): registro como fração da tessitura do instrumento
-    # (0 = nota mais grave, 1 = mais aguda), duração mínima que soa, e se a técnica sustenta altura precisa
+    # shortcut: idiomatismo em valores iniciais (registro como fração da tessitura: 0 = mais grave, 1 = mais aguda;
+    # duração mínima que soa; se aceita escrita microtonal); revisar com o compositor e por instrumento quando a
+    # família não bastar
     registro: tuple[float, float] = (0.0, 1.0)
     duracao_minima: Fraction = Fraction(0)
     altura_precisa: bool = True
@@ -192,20 +192,18 @@ def cabe(nome_tecnica: str, nome_instrumento: str) -> bool:
     return INSTRUMENTOS[chave].familia in t.familias and (not t.so or chave in t.so)
 
 
-def problema(nome_tecnica: str, nome_instrumento: str, nota: Nota) -> str | None:
-    """Por que a técnica não se toca nesta nota deste instrumento (família, registro, duração, altura), ou None."""
-    if not cabe(nome_tecnica, nome_instrumento):
+def problema(nome_tecnica: str, parte: Parte, nota: Nota) -> str | None:
+    """Por que a técnica não se toca nesta nota desta parte (família, registro, duração, altura), ou None."""
+    if not cabe(nome_tecnica, parte.instrumento):
         return "não se toca nesta família"
     t = tecnica(nome_tecnica)
     if nota.duracao < t.duracao_minima:
         return f"curta demais (mínimo {t.duracao_minima})"
     if not t.altura_precisa and any(a.midicents % 100 for a in nota.alturas):
         return "não tem altura precisa (escrita microtonal)"
-    try:
-        grave, agudo = INSTRUMENTOS[identificar(nome_instrumento)].tessitura
-    except ValueError:
-        return None  # instrumento fora da tabela: registro não conferível
-    if agudo > grave:
+    tessitura = tessitura_da_parte(parte)
+    if tessitura and tessitura[1] > tessitura[0]:  # fora da tabela ou sem altura: registro não conferível
+        grave, agudo = tessitura
         posicoes = [(a.midicents - grave) / (agudo - grave) for a in nota.alturas]
         if max(posicoes) > t.registro[1]:
             return "fora do registro (agudo demais)"
@@ -216,10 +214,10 @@ def problema(nome_tecnica: str, nome_instrumento: str, nota: Nota) -> str | None
 
 def tecnicas_intocaveis(ir: MusicIR) -> list[str]:
     """Verificador: toda técnica que não se toca onde está, vinda de qualquer motor ("P2 c.3: slap (...): motivo")."""
-    inicios = ir.inicios()
-    return [f"{p.id} c.{bisect_right(inicios, e.inicio)}: {t} ({p.instrumento}): {motivo}"
+    locais = localizar(ir)
+    return [f"{p.id} c.{locais[e.id][2]}: {t} ({p.instrumento}): {motivo}"
             for p, _, e in ir.eventos() if isinstance(e, Nota)
-            for t in e.tecnicas if (motivo := problema(t, p.instrumento, e))]
+            for t in e.tecnicas if (motivo := problema(t, p, e))]
 
 
 def tecnica(nome: str) -> Tecnica:

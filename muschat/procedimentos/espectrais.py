@@ -6,7 +6,7 @@ import random
 from fractions import Fraction
 
 from muschat import musicir as ir
-from muschat.instrumentos import instrumento, no_registro
+from muschat.instrumentos import instrumento, no_registro, tessitura_da_parte
 from muschat.plano import Plano
 from muschat.procedimentos.comum import QUARTETO, Grade, Ids, com_alturas, exigir, por_voz, repartir
 
@@ -24,7 +24,9 @@ def espectralizar(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], r
     atual = exigir(atual)
     reservatorio = sorted(set(parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))))
     salto = int(p["salto_maximo"])
-    com_altura = [parte for parte in atual.partes if _tessitura(parte) is None or len(set(_tessitura(parte))) == 2]
+    sel = plano.selecao  # só as partes que a seleção alcança recebem faixa (e precisam de parciais)
+    com_altura = [parte for parte in atual.partes if (not sel.partes or parte.id in sel.partes)
+                  and len(set(tessitura_da_parte(parte) or (0, 1))) == 2]
     faixas = {parte.id: _faixa(reservatorio, parte, k, len(com_altura)) for k, parte in enumerate(com_altura)}
 
     def trecho(parte: ir.Parte, voz: ir.Voz, alvo: list[ir.Evento]) -> list[ir.Evento]:
@@ -39,19 +41,10 @@ def espectralizar(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], r
     return por_voz(atual, plano.selecao, trecho)
 
 
-def _tessitura(parte: ir.Parte) -> tuple[int, int] | None:
-    if parte.tessitura:
-        return parte.tessitura
-    try:
-        return instrumento(parte.instrumento).tessitura
-    except ValueError:  # instrumento fora da tabela (ex.: nome em inglês de um MusicXML): sem limite conhecido
-        return None
-
-
 def _faixa(reservatorio: list[int], parte: ir.Parte, k: int, n: int) -> tuple[list[int], list[int]]:
     """(faixa planejada da parte k de n, do agudo ao grave; parciais que cabem na tessitura). As faixas se
     sobrepõem pela metade, para as vozes vizinhas conversarem."""
-    tessitura = _tessitura(parte)
+    tessitura = tessitura_da_parte(parte)
     cabem = [a for a in reservatorio if tessitura is None or tessitura[0] <= a <= tessitura[1]]
     if not cabem:
         raise ValueError(f"nenhum parcial cabe na tessitura de {parte.instrumento} ({parte.id}); mude a fundamental "
@@ -59,6 +52,7 @@ def _faixa(reservatorio: list[int], parte: ir.Parte, k: int, n: int) -> tuple[li
     ultimo = max(len(reservatorio) - 1, 1)
     baixo, alto = (n - 1 - k) / (n + 1), (n - k + 1) / (n + 1)
     faixa = [a for a in cabem if baixo <= reservatorio.index(a) / ultimo <= alto]
+    # shortcut: faixa mínima fixa de 3 parciais; virar parâmetro se o compositor quiser linhas mais estreitas
     if len(faixa) < 3:  # faixa estreita demais: os parciais que cabem mais perto do centro dela
         centro = (baixo + alto) / 2 * ultimo
         faixa = sorted(sorted(cabem, key=lambda a: abs(reservatorio.index(a) - centro))[:3])

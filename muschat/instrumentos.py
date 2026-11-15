@@ -9,7 +9,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
-from muschat.musicir import Clave
+from muschat.musicir import Clave, Parte
 
 Familia = Literal["cordas", "madeiras", "metais", "percussao", "teclado", "harpa", "violao", "voz"]
 FAMILIAS: tuple[Familia, ...] = ("cordas", "madeiras", "metais", "percussao", "teclado", "harpa", "violao", "voz")
@@ -142,6 +142,16 @@ def identificar(nome: str) -> str:
         if conhecido in chave:
             return conhecido
     raise ValueError(f"instrumento sem tessitura conhecida: {nome!r} (conhecidos: {', '.join(INSTRUMENTOS)})")
+
+
+def tessitura_da_parte(parte: Parte) -> tuple[int, int] | None:
+    """A tessitura própria da parte, senão a da tabela; None para instrumento fora da tabela (não conferível)."""
+    if parte.tessitura:
+        return parte.tessitura
+    try:
+        return instrumento(parte.instrumento).tessitura
+    except ValueError:
+        return None
 
 
 def no_registro(altura: int, tessitura: tuple[int, int] | None) -> int:

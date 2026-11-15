@@ -125,7 +125,8 @@ para procedimentos que criam peça nova.
 de compassos (1 = primeiro). "só o violoncelo" = a parte do violoncelo; "os compassos finais" = os \
 últimos compassos da composição; resolva "ele", "esse trecho" pelo histórico. Vazia = a peça \
 inteira. Tudo fora da seleção fica intacto.
-- tecnicas: nomes do grimório para aplicar_tecnicas, por família de instrumento — {tecnicas}. Escolha \
+- tecnicas: nomes do grimório para tecnicas_por_gesto (preferido: técnica por gesto, só onde se toca) ou \
+aplicar_tecnicas (nota a nota), por família de instrumento — {tecnicas}. Escolha \
 técnicas que se toquem nos instrumentos do plano (aplicar_tecnicas sorteia, em cada parte, só as que \
 cabem na família dela).
 - semente: só se o usuário pedir uma semente específica.

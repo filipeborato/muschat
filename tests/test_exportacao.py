@@ -91,8 +91,8 @@ def test_metricas_de_linha_cruzamento_frase_e_tecnica():
     assert m["intervalos"] == {"repeticoes": 1, "conjuntos": 2, "saltos": 2}  # 200, 0, 1400, 200 | 1700
     assert m["saltos_acima_da_oitava"] == {"fl": 1, "vc": 1}
     assert m["cruzamentos"] == 1  # Ré4 da flauta contra o Fá4 do violoncelo
-    # frases separadas por pausa: fl = 3 ataques em 3 semínimas, depois 2 em 4; vc = 2 em 4
-    assert m["densidade_por_frase"] == {"fl": [1.0, 0.5], "vc": [0.5]}
+    # frases separadas por pausa ou nota longa (mínima ou mais): fl = 3 ataques em 3 semínimas, depois cada mínima
+    assert m["densidade_por_frase"] == {"fl": [1.0, 0.5, 0.5], "vc": [0.5, 0.5]}
     assert m["tecnicas_intocaveis"] == []  # slap no grave e jet whistle de mínima se tocam na flauta
     cello.vozes[0].eventos[1].tecnicas = ["slap"]
     assert metricas(ir)["tecnicas_intocaveis"] == ["vc c.2: slap (Violoncelo): não se toca nesta família"]
@@ -164,3 +164,10 @@ def test_tecnica_fora_do_registro_curta_demais_ou_sem_altura_precisa_e_apontada(
         "fl c.1: jet whistle (Flauta): não tem altura precisa (escrita microtonal)",
         "cb c.1: slap (Clarinete baixo): fora do registro (agudo demais)",
     ]
+
+
+def test_verificador_usa_a_tessitura_propria_da_parte():
+    flauta = _melodia("fl", "Flauta", [(6250, F(1), ["slap"])])
+    curta = flauta.model_copy(update={"tessitura": (6100, 6300)})  # 6250: 0,75 da tessitura própria (> 0,55); 0,07 na da tabela
+    ir = MusicIR(titulo="t", compassos=[Compasso(numerador=4, denominador=4)], partes=[curta])
+    assert metricas(ir)["tecnicas_intocaveis"] == ["fl c.1: slap (Flauta): fora do registro (agudo demais)"]
