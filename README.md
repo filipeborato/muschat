@@ -5,11 +5,11 @@
 As [receitas documentadas](docs/receitas.md) são cadeias de transformações ajustáveis para material novo
 do NotaGen ou composições existentes. São pontos de partida por referência estética, não imitações de
 compositores. O plano registra a receita e sua hipótese; os parâmetros continuam editáveis na interface.
-A tabela em `muschat/receitas.py` alimenta o prompt e gera a documentação com `uv run python -m muschat.receitas`.
+A tabela em `muschat/recipes.py` alimenta o prompt e gera a documentação com `uv run python -m muschat.recipes`.
 Scelsi explora desvios e glissandos; Lachenmann, ruído instrumental; Sciarrino, silêncio e harmônicos;
 Ligeti, cânones próximos; espectral, parciais; ritmo elástico, quiálteras e respirações.
 Gere as 24 comparações sobre as quatro peças de referência com
-`uv run python -m muschat.referencias camada-contemporanea --receitas` (MusicXML, JSON, métricas e PDF com LilyPond).
+`uv run python -m muschat.references contemporary-layer --recipes` (MusicXML, JSON, métricas e PDF com LilyPond).
 
 A proof-of-concept chat assistant for composers and performers working with **contemporary concert music, electroacoustic music and extended techniques**.
 
@@ -55,12 +55,12 @@ Each question goes through a short chain, all in `muschat/reasoning.py`:
    provenance) and then by a deterministic builder into MusicXML (grimório techniques: `x`/diamond
    noteheads, Italian indications, quarter tones, tremolo, glissando). Verovio renders it to SVG locally.
    **Composition requests** ("crie oito compassos para quarteto...", "agora só o violoncelo") take a different
-   path (`muschat/orquestrador.py`): one more Gemini call returns a typed composition plan that may only name
-   procedures from the Python catalog (`muschat/procedimentos.py`) with parameters inside their ranges, plus a
+   path (`muschat/orchestrator.py`): one more Gemini call returns a typed composition plan that may only name
+   procedures from the Python catalog (`muschat/procedures/`) with parameters inside their ranges, plus a
    selection (parts, voices, bars). Invalid plans are refused before anything runs; the model never writes code.
-   The procedure runs on MusicIR with a seed, and the orchestrator rejects the result if anything outside the
-   selection changed. A single constraint checker (range, forbidden interval, no unison, maximum density) runs
-   after every operation and its violations are reported, not hidden. Subjective requests ("mais fragmentado") come
+   The procedure runs on `ScoreIR` (`muschat/score_ir.py`) with a seed, and the orchestrator rejects the result if
+   anything outside the selection changed. A single constraint checker (`muschat/constraints.py`: range, forbidden
+   interval, no unison, maximum density) runs after every operation and its violations are reported, not hidden. Subjective requests ("mais fragmentado") come
    back as explicit operational hypotheses with numbers, which the sidebar lets you adjust and re-apply without
    calling the model. The result becomes a new version of the session composition, engraved with Abjad +
    LilyPond (score and parts as PDF, `.ly` download) when LilyPond is installed.
@@ -118,9 +118,9 @@ validated on Windows**; Linux/macOS adapter behavior and headless execution have
 ### NotaGen: local composition model (optional)
 
 [NotaGen](https://github.com/ElectricAlexis/NotaGen) (MIT) is a symbolic music model trained on classical scores.
-When enabled, the plan can start a piece with **`gerar_notagen`**: NotaGen-X writes phrases, rhythm and articulation
+When enabled, the plan can start a piece with **`generate_notagen`**: NotaGen-X writes phrases, rhythm and articulation
 for chamber music from a *period-composer-instrumentation* condition (112 combinations, e.g. `Romantic_Ravel,
-Maurice_Chamber`), the result comes back as MusicXML and becomes a Version (provenance `externo`, author
+Maurice_Chamber`), the result comes back as MusicXML and becomes a Version (provenance `external`, author
 `NotaGen-X`). Gemini only plans: it picks the condition and the number of bars. No tokens are spent on the notes.
 
 **What it does not do.** Its style is Baroque to Romantic: no extended techniques, no microtones. That gestural
@@ -262,9 +262,9 @@ the PDFs; without it the score appears through Verovio and the zip has no PDF. A
 JSON is under **Composição → Arquivo da composição → dados do experimento**, and the full package under **Exportar**.
 
 The results below come from real runs on 2026-11-12 with `gemini-3.1-flash-lite`, LilyPond 2.26.0 and Windows 11.
-The requests went through the same turn function the app calls (`muschat.reasoning.responder`, real Gemini, real
+The requests went through the same turn function the app calls (`muschat.reasoning.respond`, real Gemini, real
 index), run from a script instead of the browser, and the outputs were saved with the same export functions. The
-experiment JSONs from those runs therefore have no `motores` entry; downloaded from the app, they list LilyPond.
+experiment JSONs from those runs therefore have no `engines` entry; downloaded from the app, they list LilyPond.
 The model chooses the plan and the seed, so a rerun gives a different but comparable result. Re-applying a version
 with **Ajustar parâmetros e reaplicar** reuses its seed and is deterministic.
 
@@ -274,7 +274,7 @@ with **Ajustar parâmetros e reaplicar** reuses its seed and is deterministic.
 2. Expect: version 1 with four parts (Violino, Violino, Viola, Violoncelo), 8 bars, the engraved score, and PDF
    buttons for the score and each part.
 
-Result: plan `serie_harmonica → subdividir → densidade → aplicar_tecnicas`, all on Python/Abjad. The version has 4
+Result: plan `harmonic_series → subdivide → density → apply_techniques`, all on Python/Abjad. The version has 4
 parts, 8 bars, 226 notes, 37 tuplet groups and 116 harmonics. The density ramp (1 → 3 attacks per quarter note) and
 the tuplet and harmonic proportions came back as stated hypotheses. No constraint was violated. LilyPond produced 5
 PDFs (a 2-page score and four 1-page parts) and the score SVG.
@@ -286,9 +286,9 @@ decision:
 
 | Selector | Request | Real decision |
 |---|---|---|
-| Automático | `Crie quatro compassos para quarteto de cordas a partir de uma série harmônica sobre Dó 2.` | `serie_harmonica` on Python/Abjad, "o único que executa aqui" (OpenMusic disabled) |
-| Python/Abjad | `Crie quatro compassos para trio de violino, viola e violoncelo com densidade crescente.` | `serie_harmonica` and `densidade` on Python/Abjad, "como escolhido (automático)": the parenthesis is the engine's execution state. Hypothesis: density 0.5 → 3 attacks per quarter note |
-| Automático | `Produza uma sequência intervalar derivada de um espectro harmônico e utilize-a para criar material musical para quarteto de cordas.` | `serie_harmonica` on Python/Abjad, same rule |
+| Automático | `Crie quatro compassos para quarteto de cordas a partir de uma série harmônica sobre Dó 2.` | `harmonic_series` on Python/Abjad, "only engine that runs here" (OpenMusic disabled) |
+| Python/Abjad | `Crie quatro compassos para trio de violino, viola e violoncelo com densidade crescente.` | `harmonic_series` and `density` on Python/Abjad, "as selected (automatic)": the parenthesis is the engine's execution state. Hypothesis: density 0.5 → 3 attacks per quarter note |
+| Automático | `Produza uma sequência intervalar derivada de um espectro harmônico e utilize-a para criar material musical para quarteto de cordas.` | `harmonic_series` on Python/Abjad, same rule |
 | Automático | `Use um procedimento espectral do OpenMusic para produzir material de alturas para quarteto.` | not classified as a composition request: the model explained the OpenMusic spectral workflow in text and no version was created |
 
 The rules (R1–R6) are in `docs/adr/0002-regras-do-roteador.md`. With OpenMusic enabled, the OpenMusic and Híbrido
@@ -300,7 +300,7 @@ selectors exercise the assisted rules (see the appendix).
 2. Then: `Aplique um processo às durações do violoncelo, preservando os outros instrumentos.`
 3. In **Composição**, compare 1 → 2.
 
-Result: version 2 ran `permutar_duracoes` with selection `{'partes': ['P4']}`. The programmatic diff lists 10
+Result: version 2 ran `permute_durations` with selection `{'parts': ['P4']}`. The programmatic diff lists 10
 changed events, all in the cello (P4), and nothing in the other three parts. The composition JSON was then saved,
 opened in a new session and edited again (`Agora transponha a viola uma terça menor acima, sem mudar os outros
 instrumentos.`). Version 3 transposed only the viola (22 events in P3).
@@ -332,8 +332,8 @@ needs your hand.
 
 **B: OpenMusic.** Selector **OpenMusic**. Ask `Produza uma sequência intervalar derivada de um espectro harmônico e
 utilize-a para criar material musical.` The flow stops at **Aguardando você** with a task folder under
-`.muschat/openmusic/<task id>/` (`entrada.txt`, `instrucoes.md` and a copy of the approved `serie_harmonica.lisp`)
-and a `.zip` of it. In OpenMusic's Listener, use `Lisp → Load File…` on the task's `serie_harmonica.lisp`; it writes
+`.muschat/openmusic/<task id>/` (`entrada.txt`, `instrucoes.md` and a copy of the approved `harmonic_series.lisp`)
+and a `.zip` of it. In OpenMusic's Listener, use `Lisp → Load File…` on the task's `harmonic_series.lisp`; it writes
 `saida.txt` next to `entrada.txt`. Upload `saida.txt` and click **Importar e continuar**.
 
 **C: Hybrid.** Selector **Híbrido**. Ask `Use um procedimento espectral do OpenMusic para produzir material de alturas
@@ -355,9 +355,9 @@ Lisp error to `erro.txt`, and the upload shows that error.
 
 | Library | Procedure | Example request | Real result (fixed plan, seed 7, no Gemini call) |
 |---|---|---|---|
-| Chaos 1.5 | `densidade_caotica`, `registro_caotico`, `dinamica_caotica`, `duracoes_caoticas` (Verhulst logistic map → one value per bar) | `Gere um processo composicional baseado em dinâmica caótica para controlar a densidade dos ataques de um quarteto.` (on an existing piece) | series `0.1 0.352 0.9907 1.0166`, equal to the documented formula; 2, 5, 12, 12 attacks per bar |
-| Situation 3.1 | `distribuir_restricoes` (`csolver`, one domain per slot, all different; the plan's range and forbidden-interval constraints go into the patch) | `Distribua doze alturas em quatro instrumentos, evitando uníssonos e mantendo cada parte dentro de seu registro.` | 12 different pitches, each in range, accepted by the checker |
-| OMChroma 5.2 + Csound | `sintese_aditiva` (notes → `add-1` partials, count rising over time) | `Utilize os eventos da partitura para controlar uma síntese aditiva cuja densidade espectral aumenta progressivamente.` | 159 partials, `.orc`/`.sco` from OMChroma, 8 s `muschat.wav` rendered by Csound 7.0, electronic part added (cues and a curve, no notes) |
+| Chaos 1.5 | `chaotic_density`, `chaotic_register`, `chaotic_dynamics`, `chaotic_durations` (Verhulst logistic map → one value per bar) | `Gere um processo composicional baseado em dinâmica caótica para controlar a densidade dos ataques de um quarteto.` (on an existing piece) | series `0.1 0.352 0.9907 1.0166`, equal to the documented formula; 2, 5, 12, 12 attacks per bar |
+| Situation 3.1 | `distribute_by_constraints` (`csolver`, one domain per slot, all different; the plan's range and forbidden-interval constraints go into the patch) | `Distribua doze alturas em quatro instrumentos, evitando uníssonos e mantendo cada parte dentro de seu registro.` | 12 different pitches, each in range, accepted by the checker |
+| OMChroma 5.2 + Csound | `additive_synthesis` (notes → `add-1` partials, count rising over time) | `Utilize os eventos da partitura para controlar uma síntese aditiva cuja densidade espectral aumenta progressivamente.` | 159 partials, `.orc`/`.sco` from OMChroma, 8 s `muschat.wav` rendered by Csound 7.0, electronic part added (cues and a curve, no notes) |
 
 The three example requests were also run through Gemini (`gemini-3.1-flash-lite`, Hybrid selector) with the OpenMusic
 steps in the real OM; results in `docs/pesquisa/openmusic.md`. In these integrations OpenMusic returns numbers (a
@@ -369,7 +369,7 @@ fail, and never sent to OpenMusic: in the real test, the solver's exhaustive sea
 OpenMusic. Csound (`CSOUND` or `PATH`) renders the audio; without it the `.orc`/`.sco` are kept and the part says why
 there is no audio. Clouds is installed but has no patch (its constraints are visual boxes). OM-SuperVP needs the
 SuperVP executable (IRCAM Forum subscription): Muschat detects it separately and can import its spectral data and
-turn it into notes (`eventos_do_espectro`), tested with fakes only; no SuperVP patch is validated. Details:
+turn it into notes (`events_from_spectrum`), tested with fakes only; no SuperVP patch is validated. Details:
 `docs/pesquisa/openmusic.md`.
 
 ## Limitations
@@ -414,35 +414,38 @@ app.py                    Streamlit UI: chat, reasoning panel, scores, sidebar, 
 muschat/config.py         API key and models from env / .env / Streamlit secrets
 muschat/prompts.py        system, analysis, turn-context and notation prompts
 muschat/reasoning.py      one turn: analysis -> retrieval -> notation (on demand) -> synthesis
-muschat/erros.py          maps API/network exceptions to user-facing messages
-muschat/rag/leitores.py   corpus readers (Markdown, PDF/TXT, MusicXML) -> chunks
-muschat/rag/indice.py     Gemini embeddings and the local numpy index
-muschat/rag/busca.py      hybrid search (dense + BM25, RRF) and context assembly
+muschat/errors.py         maps API/network exceptions to user-facing messages
+muschat/rag/readers.py    corpus readers (Markdown, PDF/TXT, MusicXML) -> chunks
+muschat/rag/index.py      Gemini embeddings and the local numpy index
+muschat/rag/search.py     hybrid search (dense + BM25, RRF) and context assembly
 muschat/rag/ingest.py     `python -m muschat.rag.ingest`
-muschat/musicir.py        MusicIR: parts, voices, typed events, provenance, structural diff
-muschat/plano.py          composition plan schema (operations, parameters, selection)
-muschat/procedimentos/    Python procedure catalog: generation (harmonic series, distribution by range),
+muschat/score_ir.py       ScoreIR: parts, voices, typed events, provenance, structural diff
+muschat/plan.py           composition plan schema (operations, parameters, selection, sections)
+muschat/recipes.py        aesthetic recipes and docs generation (`python -m muschat.recipes`)
+muschat/procedures/       Python procedure catalog: generation (harmonic series, distribution by range),
                           melodic (transpose, invert, retrograde, rotate, interval scaling), rhythmic
-                          (augmentation/diminution, permutation, tuplet subdivision), density and progressive
-                          ramps (register, dynamics), techniques
-muschat/restricoes.py     constraint checker (range, forbidden interval, no unison, max density)
-muschat/instrumentos.py   orchestral instrument table: family, clef and sounding range (strings, woodwinds,
+                          (augmentation/diminution, permutation, tuplet subdivision), density, progressive
+                          ramps (register, dynamics), contemporary transformations, and techniques
+muschat/constraints.py    constraint checker (range, forbidden interval, no unison, max density)
+muschat/instruments.py    orchestral instrument table: family, clef and sounding range (strings, woodwinds,
                           brass, pitched and unpitched percussion, keyboards, harp, guitar, voices)
-muschat/notacao/lilypond.py  MusicIR -> Abjad -> LilyPond text; LilyPond detection and engraving (PDF/SVG)
-muschat/orquestrador.py   composition turn: plan -> router -> list of steps (pause at an OpenMusic step, resume
+muschat/sections.py       heterogeneous multi-section insertion helpers
+muschat/orchestration.py  idiomatic part adaptation (clef + technique filtering)
+muschat/notation/lilypond.py  ScoreIR -> Abjad -> LilyPond text; LilyPond detection and engraving (PDF/SVG)
+muschat/orchestrator.py   composition turn: plan -> router -> list of steps (pause at an OpenMusic step, resume
                           after import) -> preservation check per step -> version
-muschat/registro.py       capability registry: what each engine/library/engraver can do on this machine, and how
-muschat/roteador.py       explicit, ordered routing rules (docs/adr/0002-regras-do-roteador.md)
+muschat/registry.py       capability registry: what each engine/library/engraver can do on this machine, and how
+muschat/router.py         explicit, ordered routing rules (docs/adr/0002-regras-do-roteador.md)
 muschat/openmusic.py      OpenMusic bridge (assisted): install detection, task, output import
 muschat/notagen.py        NotaGen bridge (optional): install detection, Compositor run as a separate process
-servicos/notagen_gerar.py runs inside NotaGen's own environment: N bars -> ABC -> MusicXML
-muschat/patches_om.py     approved patches: entrada.txt per patch, saida.txt -> MusicIR, Csound rendering
-patches/                  the project's Lisp patches loaded in OpenMusic (Esquisse, Chaos, Situation, OMChroma)
-muschat/composicao.py     session composition: versions, undo, go back, compare, JSON save/open
-muschat/exportacao.py     MIDI writer, experiment JSON, export zip, descriptive metrics, loss notes per format
-muschat/notacao/          example schema -> MusicIR, extended-technique table by instrument family, MusicXML
+services/notagen_generate.py runs inside NotaGen's own environment: N bars -> ABC -> MusicXML
+muschat/om_patches.py     approved patches: entrada.txt per patch, saida.txt -> ScoreIR, Csound rendering
+patches/                  the project's Lisp patches loaded in OpenMusic (Esquisse, Chaos, Situation, OMChroma, Cluster-Engine)
+muschat/composition.py    session composition: versions, undo, go back, compare, JSON save/open
+muschat/export.py         MIDI writer, experiment JSON, export zip, descriptive metrics, loss notes per format
+muschat/notation/         example schema -> ScoreIR, extended-technique table by instrument family, MusicXML
                           builder and reader (open .musicxml/.mxl as a Version), Verovio renderer
-muschat/referencias.py    fixed reference pieces for before/after listening (`python -m muschat.referencias <label>`)
+muschat/references.py     fixed reference pieces for before/after listening (`python -m muschat.references <label>`)
 tests/                    pytest suite
 ```
 
@@ -452,6 +455,6 @@ Muschat depends on [Abjad](https://github.com/Abjad/abjad), which is GPL-3.0, so
 combined work under GPL-3.0. LilyPond (GPL-3.0) is an external program the user installs; it is called as a process
 and never shipped with the project. OpenMusic and its libraries (GPL-3.0 or their own licenses; SuperVP has a
 separate IRCAM license) are optional external applications and are not shipped either; NotaGen (MIT) and its
-weights are optional, installed by the user and run as a separate process; `patches/serie_harmonica.lisp`
+weights are optional, installed by the user and run as a separate process; `patches/harmonic_series.lisp`
 is written by this project and only calls Esquisse's public `harm-series`. The license report is in
 `docs/pesquisa/openmusic.md`.

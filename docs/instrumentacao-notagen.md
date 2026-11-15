@@ -26,4 +26,4 @@ permanece o comportamento existente de atribuir as partes aos instrumentos do pl
 Validação local: uma saída real salva do NotaGen foi adaptada de quarteto para flauta e cello,
 seguida de técnicas por gesto e substituição tímbrica. O arranjo tem oito compassos, passou pelo
 verificador e foi exportado em MusicXML, JSON e PDF compilado pelo LilyPond em
-`.muschat/referencias/duo-flauta-cello/`. Não foi feita nova inferência GPU nem avaliação por escuta.
+`.muschat/references/flute-cello-duo/`. Não foi feita nova inferência GPU nem avaliação por escuta.

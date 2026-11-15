@@ -1,40 +1,41 @@
-;;; Muschat — patch aprovado "chaos_verhulst" (densidade, registro, dinâmica e durações caóticos) (autoria do projeto Muschat; chama Verhulst da Chaos).
+;;; Muschat — approved patch "chaos_verhulst" (chaotic density, register, dynamics, and durations; authored by the
+;;; Muschat project; calls Verhulst from Chaos).
 ;;;
-;;; Lê <pasta>/entrada.txt (três números: x0 lambda iteracoes), chama (alea::verhulst x0 lambda iteracoes), que
-;;; devolve iteracoes + 1 valores, e grava a série em <pasta>/saida.txt, separados por espaço. Em erro, grava -2 em
-;;; saida.txt e a mensagem em erro.txt. Não contém código da Chaos: só a chamada à função pública.
+;;; Reads <folder>/entrada.txt (three numbers: x0 lambda iterations), calls (alea::verhulst x0 lambda iterations),
+;;; which returns iterations + 1 values, and writes the series to <folder>/saida.txt separated by spaces. On error,
+;;; writes -2 to saida.txt and the error message to erro.txt. Contains no Chaos code: only calls the public function.
 ;;;
-;;; Uso no OpenMusic: Lisp > Load File > este arquivo, ao lado de entrada.txt.
+;;; OpenMusic usage: Lisp > Load File > this file, next to entrada.txt.
 
 (in-package :om)
 
 (load-lib-for '("Chaos"))
 
-(defun muschat-chaos-ler (arquivo)
-  "Só números: *read-eval* desligado, reais lidos em dupla precisão, qualquer outra coisa interrompe."
+(defun muschat-chaos-read (filepath)
+  "Numbers only: *read-eval* disabled, floats read as double-float, anything else aborts."
   (let ((*read-eval* nil) (*read-default-float-format* 'double-float))
-    (with-open-file (s arquivo :direction :input)
-      (loop for x = (read s nil :fim)
-            until (eq x :fim)
-            do (unless (numberp x) (error "entrada.txt com algo que não é número: ~S" x))
+    (with-open-file (s filepath :direction :input)
+      (loop for x = (read s nil :eof)
+            until (eq x :eof)
+            do (unless (numberp x) (error "entrada.txt contains a non-numeric value: ~S" x))
             collect x))))
 
-(defun muschat-chaos-gravar (pasta nome texto)
-  (with-open-file (s (merge-pathnames nome pasta) :direction :output :if-exists :supersede :if-does-not-exist :create)
-    (write-string texto s)))
+(defun muschat-chaos-write (folder filename text)
+  (with-open-file (s (merge-pathnames filename folder) :direction :output :if-exists :supersede :if-does-not-exist :create)
+    (write-string text s)))
 
-(defun muschat-chaos-verhulst (pasta)
+(defun muschat-chaos-verhulst (folder)
   (handler-case
-      (let ((numeros (muschat-chaos-ler (merge-pathnames "entrada.txt" pasta))))
-        (unless (= (length numeros) 3)
-          (error "entrada.txt precisa de 3 números, tem ~D" (length numeros)))
-        (destructuring-bind (x0 lam iteracoes) numeros
-          (let ((serie (alea::verhulst (float x0 1d0) (float lam 1d0) (round iteracoes))))
-            (muschat-chaos-gravar pasta "saida.txt" (format nil "~{~,10F~^ ~}~%" serie))
-            serie)))
+      (let ((numbers (muschat-chaos-read (merge-pathnames "entrada.txt" folder))))
+        (unless (= (length numbers) 3)
+          (error "entrada.txt requires 3 numbers, got ~D" (length numbers)))
+        (destructuring-bind (x0 lam iterations) numbers
+          (let ((series (alea::verhulst (float x0 1d0) (float lam 1d0) (round iterations))))
+            (muschat-chaos-write folder "saida.txt" (format nil "~{~,10F~^ ~}~%" series))
+            series)))
     (error (e)
-      (muschat-chaos-gravar pasta "erro.txt" (format nil "~A~%" e))
-      (muschat-chaos-gravar pasta "saida.txt" (format nil "-2~%")))))
+      (muschat-chaos-write folder "erro.txt" (format nil "~A~%" e))
+      (muschat-chaos-write folder "saida.txt" (format nil "-2~%")))))
 
-;; A pasta da tarefa acompanha o arquivo carregado, independentemente do workspace.
+;; The task folder follows the loaded file regardless of workspace location.
 (muschat-chaos-verhulst (make-pathname :name nil :type nil :defaults *load-truename*))

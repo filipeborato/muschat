@@ -20,7 +20,7 @@ Evidência (detalhe e fontes em `docs/pesquisa/openmusic.md`):
 - Há código OSC no repositório, mas o comportamento não está documentado. Disparar a avaliação de patches por OSC
   exigiria um patch receptor sempre aberto, e isso não está provado.
 - Os formatos de arquivo estão documentados: MusicXML (import e export de voice/poly), MIDI, SDIF e TextFile ligada a
-  arquivo externo. As alturas usam midicents, como a MusicIR.
+  arquivo externo. As alturas usam midicents, como a `ScoreIR` (`muschat/score_ir.py`).
 
 ## Decisão
 
@@ -33,29 +33,29 @@ JSONs e tarefas existentes continuam legíveis e a saída pode ser produzida em 
 - O Muschat gera uma **Tarefa OpenMusic** num diretório isolado e ignorado pelo git. A tarefa contém um arquivo de
   entrada só com dados (números serializados pelo projeto a partir de parâmetros validados, nunca texto livre nem
   Lisp), uma cópia de um **patch aprovado** versionado no projeto e as instruções passo a passo.
-- O compositor carrega `serie_harmonica.lisp` pelo menu `Lisp / Load File` do Listener e devolve a saída pela
+- O compositor carrega `patches/harmonic_series.lisp` pelo menu `Lisp / Load File` do Listener e devolve a saída pela
   interface. Esse script fixo do projeto lê `entrada.txt` ao lado do próprio arquivo e grava `saida.txt` ali.
-- O Muschat valida (formato, faixa de valores, número de eventos) e converte para MusicIR com proveniência
+- O Muschat valida (formato, faixa de valores, número de eventos) e converte para `ScoreIR` com proveniência
   `openmusic`.
 - Formato de retorno comprovado: **texto com midicents inteiros**, arredondados pela função `round` do Lisp antes
   da quantização microtonal no Muschat. MusicXML direto do OM continua sem validação experimental.
 
 ## Consequências
 
-- O Registro de capacidades declara o OpenMusic como `manual` quando a instalação for detectada, e como
-  `indisponivel` quando não for. Nunca como `automatico`.
-- O Roteador, no modo Automático, prefere Python para procedimentos que também existem em Python (ex.: série
-  harmônica) e diz isso na justificativa.
+- O Registro de capacidades (`muschat/registry.py`) declara o OpenMusic como `manual` quando a instalação for
+  detectada, e como `unavailable` quando não for. Nunca como `automatic`.
+- O Roteador (`muschat/router.py`), no modo `auto` (Automático), prefere Python para procedimentos que também existem
+  em Python (ex.: `harmonic_series`) e diz isso na justificativa.
 - A composição precisa pausar e retomar uma etapa pendente (Tarefa sobrevive a rerun e vai no JSON exportado).
 - Nenhum código das bibliotecas GPL entra no repositório. Só patches de autoria própria.
 - 2026-11-12: a mesma estratégia vale para Chaos, Situation e OMChroma (patches em `patches/`, validados no OM
-  real; ver docs/pesquisa/openmusic.md). Um patch só é oferecido depois de rodar no OM real (`validado`). O áudio
+  real; ver `docs/pesquisa/openmusic.md`). Um patch só é oferecido depois de rodar no OM real (`validated`). O áudio
   do OMChroma é renderizado pelo Muschat com o Csound detectado; a etapa do OM continua assistida. Problemas da
   Situation sem solução não vão ao OM: a busca exaustiva travou o app no teste real.
 
-- 2026-11-15: Cluster Engine (`alturas_por_restricoes.lisp`) validado no OM real com o mesmo esquema; a busca do
-  solver tem prazo de 60 s dentro das regras, e as regras entre vozes são preferência por padrão (obrigatórias
-  travaram a busca). Detalhes em docs/pesquisa/openmusic.md.
+- 2026-11-15: Cluster Engine (`patches/pitches_by_constraints.lisp`) validado no OM real com o mesmo esquema; a busca
+  do solver tem prazo de 60 s dentro das regras, e as regras entre vozes são preferência por padrão (obrigatórias
+  travaram a busca). Detalhes em `docs/pesquisa/openmusic.md`.
 
 ## Para evoluir
 

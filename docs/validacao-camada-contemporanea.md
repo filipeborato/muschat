@@ -5,7 +5,7 @@ deformar ritmo e receitas estéticas. Os parâmetros constam no catálogo e apar
 
 As seis receitas foram executadas nas quatro peças de referência: 24 composições exportadas
 em MusicXML, JSON e LilyPond, com 24 PDFs compilados pelo LilyPond 2.26.0.
-Arquivos locais em `.muschat/referencias/camada-contemporanea/`.
+Arquivos locais em `.muschat/references/contemporary-layer/` (gerados por `uv run python -m muschat.references contemporary-layer --recipes`).
 
 | Referência | Ataques/semínima antes | Após rarefazer |
 | --- | ---: | ---: |
@@ -15,10 +15,10 @@ Arquivos locais em `.muschat/referencias/camada-contemporanea/`.
 | Trio subindo | 3,750 | 1,594 |
 
 As métricas completas incluem densidade por frase e cruzamentos; não são notas de qualidade estética.
-A receita Lachenmann passou sem técnicas intocáveis nas quatro referências.
+A receita Lachenmann passou sem `unplayable_techniques` nas quatro referências.
 
-Uma saída real do NotaGen já salva em `.scratch/validacao-secoes.musicxml` foi transformada
-pela receita Scelsi e exportada como `notagen-scelsi.musicxml`, JSON e PDF nessa pasta.
+Uma saída real do NotaGen salva localmente (gitignored em `.scratch/`) foi transformada
+pela receita Scelsi e exportada como `notagen-scelsi.musicxml`, JSON e PDF.
 Não houve nova inferência GPU nessa validação. A escuta do compositor permanece pendente,
 assim como a avaliação visual da interface ao vivo.
 
@@ -35,8 +35,8 @@ A descrição de trio com flauta e multifônicos não corresponde ao arquivo.
 
 O prompt incentivava explicações didáticas e exemplos ilustrativos. A síntese recebia o resumo
 do plano, sem contagem de notas ou técnicas efetivamente presentes. Agora recebe esse inventário,
-e o resumo indica partes sem notas. A ordem de operações também importa: `tecnicas_por_gesto`
-substitui timbres anteriores; após `substituir_timbre`, pode apagar o ruído. O planejamento agora
+e o resumo indica partes sem notas. A ordem de operações também importa: `gestural_techniques`
+substitui timbres anteriores; após `timbral_substitution`, pode apagar o ruído. O planejamento agora
 explicita essa precedência. Ambas conservam o ritmo e não preenchem partes silenciosas.
 
 O XML final não comprova se as partes vazias vieram da geração ou da conversão. A bridge do NotaGen

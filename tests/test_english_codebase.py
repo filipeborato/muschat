@@ -121,3 +121,20 @@ def test_llm_prompts_and_catalog_use_canonical_english_contract():
     assert "gestural_techniques" in CATALOG
     assert "harmonic_series" in CATALOG
     assert "Reply in the user's language" in prompts.SYSTEM
+
+
+def test_approved_openmusic_patches_use_canonical_english_paths():
+    from muschat.om_patches import PATCHES
+
+    for patch in PATCHES.values():
+        if patch.file is None:
+            continue
+        path = ROOT / patch.file
+        assert path.is_file(), f"missing approved patch: {patch.file}"
+        assert patch.file in {
+            "patches/harmonic_series.lisp",
+            "patches/chaos_verhulst.lisp",
+            "patches/distribute_by_constraints.lisp",
+            "patches/additive_synthesis.lisp",
+            "patches/pitches_by_constraints.lisp",
+        }

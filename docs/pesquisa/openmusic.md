@@ -23,7 +23,7 @@ Entrada: `3600 1 1 1 16`. Saída real:
 ```
 
 Os 16 valores coincidiram exatamente com `round(3600 + 1200 * log2(n))`, para `n = 1..16`.
-O script `patches/serie_harmonica.lisp` foi aprovado no catálogo; as tarefas agora recebem uma cópia local,
+O script `patches/harmonic_series.lisp` foi aprovado no catálogo; as tarefas agora recebem uma cópia local,
 também incluída no ZIP. Carregar essa cópia executa a tarefa, resolvendo a entrada a partir do próprio arquivo.
 
 **Experimento B:** tarefa `om-20261111-220208-e043c2`, executada no OM pelo menu Load File.
@@ -48,34 +48,34 @@ automático disponível. MusicXML exportado diretamente do OM também não foi t
 
 Instaladas em `~/OM/Libraries`: Chaos 1.5, Situation 3.1, Clouds 1.1, OM2Csound 2.4, OMChroma 5.2 (releases oficiais
 do `openmusic-project`). Csound 7.0 instalado no Windows. Cada patch do projeto (`patches/*.lisp`) foi carregado pelo
-Listener (`Lisp › Load File`), com plano fixo e semente 7, sem o Gemini; as saídas foram importadas pelo `retomar`.
+Listener (`Lisp › Load File`), com plano fixo e semente 7, sem o Gemini; as saídas foram importadas pelo `resume`.
 
-- **Chaos (`densidade_caotica.lisp`, `alea::verhulst`)**: entrada `0.1 2.8 3`; saída
+- **Chaos (`chaos_verhulst.lisp`, `alea::verhulst`)**: entrada `0.1 2.8 3`; saída
   `0.1000000000 0.3520000000 0.9906688000 1.0165523604`, igual à fórmula documentada em `orbitals.lisp`. Importada
   sobre um quarteto de 4 compassos (mínimo 0,5, máximo 3 ataques por semínima): 2, 5, 12 e 12 ataques por compasso em
   cada parte, eventos alterados com proveniência `openmusic`.
-- **Situation (`distribuir_restricoes.lisp`, `csolver` + `variable-domains` + `generic-cnstr`)**: primeira tentativa
+- **Situation (`distribute_by_constraints.lisp`, `csolver` + `variable-domains` + `generic-cnstr`)**: primeira tentativa
   falhou com `Arithmetic error in >= ...`, gravada em `erro.txt` pelo próprio patch: `generic-cnstr` já devolve a
   lista de restrições e não deve ser embrulhada em outra lista. Corrigida, a saída foi
   `6500 6400 5800 6600 6300 5500 5700 6100 5600 5900 6000 6200`: 12 alturas diferentes, cada uma na tessitura do seu
   instrumento, aceitas pelo verificador. **Um problema sem solução (violinos com 6 vagas e 5 alturas ao alcance)
   travou o OpenMusic** na busca exaustiva; o OM foi fechado à mão. Por isso o Muschat decide a existência antes pela
   condição de Hall (necessária e suficiente para vagas -> alturas diferentes) e não envia problema impossível.
-- **OMChroma (`sintese_aditiva.lisp`, `om-make-array 'add-1` + `synthesize :run nil`)**: 159 parciais de um quarteto
+- **OMChroma (`additive_synthesis.lisp`, `om-make-array 'add-1` + `synthesize :run nil`)**: 159 parciais de um quarteto
   de 2 compassos; o OMChroma escreveu `muschat.orc` (instrumento `add-1`: `poscil` com envelope por tabela) e
   `muschat.sco` (linhas `i1` com início, duração, amplitude em dB e frequência enviadas). O Muschat renderizou com o
   Csound 7.0: `muschat.wav`, mono 44,1 kHz, 8,0 s, pico 0,30. A composição ganhou a parte eletrônica (cues e curva de
   parciais; nenhuma nota).
 - **Clouds**: instalada, sem patch (restrições definidas por caixas visuais, sem chamada por script).
 - **OM-SuperVP**: não instalada; o executável SuperVP depende de assinatura do IRCAM Forum. Detecção, importação de
-  dado espectral e `eventos_do_espectro` testados com fakes; nenhum patch validado.
+  dado espectral e `events_from_spectrum` testados com fakes; nenhum patch validado.
 
 Artefatos locais: `.muschat/experimentos-reais/libs/`.
 
 ### Cluster Engine: execução real em 2026-11-15
 
 Cluster Engine 1.1 (Sandred; porte para OM de P. Raposo) em `~/OM/Libraries/Cluster-Engine`, OM 8.0, Windows 11.
-Patch `alturas_por_restricoes.lisp` (`ClusterEngine` + `R-pitches-one-voice`, `R-pitch-pitch`, `HR-pitches-one-voice`)
+Patch `pitches_by_constraints.lisp` (`ClusterEngine` + `R-pitches-one-voice`, `R-pitch-pitch`, `HR-pitches-one-voice`)
 carregado pelo Listener sobre material do NotaGen-X (`Romantic_Faure, Gabriel_Chamber`, 4 vozes, 4 compassos 3/4).
 
 - **1ª tentativa:** `#<anonymous interpreted function ...> is a lexical closure.` O Cluster Engine compila cada regra
@@ -95,15 +95,15 @@ carregado pelo Listener sobre material do NotaGen-X (`Romantic_Faure, Gabriel_Ch
 ### Ticket 17: alvos da Chaos, restrições na Situation e aceite pelo Gemini (2026-11-12)
 
 - A mesma chamada `alea::verhulst` (`patches/chaos_verhulst.lisp`) agora dirige densidade, registro, dinâmica ou
-  figura rítmica por compasso; o mapeamento para a MusicIR é Python, testado.
+  figura rítmica por compasso; o mapeamento para a `ScoreIR` é Python, testado.
 - A Situation recebe as restrições do plano: tessitura estreita o domínio das partes citadas; intervalo proibido vira
   pares `i j d` no `entrada.txt`, uma `generic-cnstr` com opção `f` por par. Validado no OM com 100 cents proibidos:
   saída `6100 6200 6400 5900 6300 5600 5800 5700 6500 6000 5500 6600`, sem nenhum semitom entre notas seguidas da
   mesma parte. Antes de enviar, o Muschat decide a existência (Hall; busca limitada quando há pares).
-- Aceite manual pelo Gemini (`gemini-3.1-flash-lite`, `responder` do app, OpenMusic ativado, seletor Híbrido), com as
+- Aceite manual pelo Gemini (`gemini-3.1-flash-lite`, `respond` do app, OpenMusic ativado, seletor Híbrido), com as
   etapas no OM real:
-  - 12, "Gere um processo composicional baseado em dinâmica caótica...": plano `dinamica_caotica` (x0 0.45, lambda
-    2.9) e `densidade_caotica` (x0 0.33, lambda 2.95), duas etapas no OM; séries conferidas com a fórmula.
+  - 12, "Gere um processo composicional baseado em dinâmica caótica...": plano `chaotic_dynamics` (x0 0.45, lambda
+    2.9) e `chaotic_density` (x0 0.33, lambda 2.95), duas etapas no OM; séries conferidas com a fórmula.
   - 13, "Distribua doze alturas em quatro instrumentos...": na primeira tentativa o modelo escolheu base 3600 e o
     Muschat recusou listando as condições ("Violino alcança 0 alturas para 3 vagas"); depois de explicar o
     parâmetro na descrição, o plano foi base 4800, passo 200, violino/viola/violoncelo/contrabaixo, resolvido pela
@@ -127,7 +127,7 @@ Artefatos: `.muschat/experimentos-reais/aceite-17/`.
   Nenhum clique foi enviado e o estado do workspace não pôde ser observado.
 - Carregador local preparado em `.muschat/om-prototipo/rodar.lisp` (ignorado pelo git), com entrada
   `3600 1 1 1 16`. Os caminhos são resolvidos a partir do próprio carregador, sem o temporário do Claude.
-  Ele carrega `patches/serie_harmonica.lisp` e deve gravar `saida.txt` ao lado de `entrada.txt`.
+  Ele carrega `patches/harmonic_series.lisp` e deve gravar `saida.txt` ao lado de `entrada.txt`.
 - **Execução real pendente.** Comparar a saída com `round(3600 + 1200 * log2(n))`, para `n` de 1 a 16,
   antes da quantização microtonal. Os valores esperados em Python não comprovam execução no OpenMusic.
   O ADR permanece proposto; o patch ainda não foi liberado no catálogo. Experimentos B e C pendentes.
@@ -207,7 +207,7 @@ Artefatos: `.muschat/experimentos-reais/aceite-17/`.
   Linux, "the SDIF ... package [is] no longer needed, as these are now installed together with the rest of the
   application". — <https://openmusic-project.github.io/openmusic/doc/om-manual/SDIF> **[fonte]**
 - **Midicents:** confirmado no código da Esquisse ("<fund> is entered in midicents"; uso de `mc->f`/`f->mc`;
-  `make-instance 'chord :lmidic`). A página de midicents do manual não foi encontrada (404). **[fonte]** A MusicIR usa
+  `make-instance 'chord :lmidic`). A página de midicents do manual não foi encontrada (404). **[fonte]** A `ScoreIR` usa
   midicents, então as alturas passam sem conversão.
 
 ### 7. Execução de Common Lisp
@@ -243,12 +243,12 @@ https://github.com/openmusic-project/"; a pasta padrão é `~/OM/Libraries/` (OM
 | Biblioteca | O que é (repositório) | Depende de | Estado esperado |
 |---|---|---|---|
 | Esquisse | "Spectral music / intervallic manipulation tools" | só o OM | candidata ao protótipo |
-| Chaos | "Dynamic systems library" | só o OM | `indisponivel` até ser instalada |
+| Chaos | "Dynamic systems library" | só o OM | `unavailable` até ser instalada |
 | Situation | "Constraint programming in OpenMusic" | só o OM | idem |
 | Clouds | "Library for Musical Constraints" | só o OM | idem |
-| OM2Csound | geração de partituras/orquestras Csound | **Csound** (executável) | `indisponivel` sem Csound |
-| OMChroma | controle de síntese em alto nível | **OM2Csound + Csound** | `indisponivel` sem os dois |
-| OM-SuperVP | controle do vocoder de fase SuperVP | **executável SuperVP** (IRCAM Forum) | `indisponivel` sem SuperVP |
+| OM2Csound | geração de partituras/orquestras Csound | **Csound** (executável) | `unavailable` sem Csound |
+| OMChroma | controle de síntese em alto nível | **OM2Csound + Csound** | `unavailable` sem os dois |
+| OM-SuperVP | controle do vocoder de fase SuperVP | **executável SuperVP** (IRCAM Forum) | `unavailable` sem SuperVP |
 
 - **[fonte]** OM-SuperVP: "This library does NOT include SuperVP sources or binaries, which must be installed
   separately", com o download em <https://forum.ircam.fr/projects/detail/analysissynthesis-command-line-tools/>.
