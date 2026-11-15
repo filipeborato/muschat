@@ -154,8 +154,8 @@ def detect_capabilities(
     from muschat.om_patches import PATCHES, find_csound
 
     active_patches = patches if patches is not None else PATCHES
-    ly_exec = getattr(lilypond, "executable", getattr(lilypond, "executavel", None)) if lilypond else None
-    ly_ver = getattr(lilypond, "version", getattr(lilypond, "versao", None)) if lilypond else None
+    ly_exec = lilypond.executable if lilypond else None
+    ly_ver = lilypond.version if lilypond else None
     caps = [
         _python_capability(),
         Capability(
@@ -185,17 +185,15 @@ def detect_capabilities(
         ),
     ]
     if notagen is not None and not isinstance(notagen, str):
-        ng_dir = getattr(notagen, "directory", getattr(notagen, "pasta", ""))
-        ng_conds = getattr(notagen, "conditions", getattr(notagen, "condicoes", ()))
         caps.append(
             Capability(
                 "NotaGen",
                 "engine",
                 "automatic",
-                f"at {ng_dir}; generates chamber music phrases and rhythm locally (GPU), Baroque to Romantic style",
+                f"at {notagen.directory}; generates chamber music phrases and rhythm locally (GPU), Baroque to Romantic style",
                 version="NotaGen-X",
                 procedures=("generate_notagen",),
-                options=ng_conds,
+                options=notagen.conditions,
                 outputs="MusicXML",
                 limitations="no extended techniques or microtones",
             )
@@ -215,16 +213,14 @@ def detect_capabilities(
             )
         )
     else:
-        om_exec = getattr(openmusic, "executable", getattr(openmusic, "executavel", ""))
-        om_ver = getattr(openmusic, "version", getattr(openmusic, "versao", None))
         caps.append(
             Capability(
                 "OpenMusic",
                 "engine",
                 "manual",
-                f"at {om_exec}; assisted execution (ADR 0001): no documented headless mode, the composer runs the "
+                f"at {openmusic.executable}; assisted execution (ADR 0001): no documented headless mode, the composer runs the "
                 "approved patch and returns the output file",
-                version=om_ver,
+                version=openmusic.version,
                 inputs="entrada.txt (numbers)",
                 outputs="saida.txt (midicents)",
                 limitations="each step awaits the composer",
@@ -243,17 +239,13 @@ def detect_capabilities(
                 f"at {path}; {usage}" if path else f"executable {exe} not found in PATH; {usage}",
             )
         )
-    om_libs = getattr(openmusic, "libraries", getattr(openmusic, "bibliotecas", {})) if openmusic else {}
+    om_libs = openmusic.libraries if openmusic else {}
     for name, (key, externals) in _OM_LIBRARIES.items():
-        lib_patches = [
-            p for p in active_patches.values() if getattr(p, "library", getattr(p, "biblioteca", "")) == key
-        ]
+        lib_patches = [p for p in active_patches.values() if p.library == key]
         approved = tuple(
-            normalize_procedure_id(getattr(p, "procedure", getattr(p, "procedimento", "")))
+            normalize_procedure_id(p.procedure)
             for p in lib_patches
-            if getattr(p, "validated", getattr(p, "validado", False))
-            and getattr(p, "file", getattr(p, "arquivo", None))
-            and Path(getattr(p, "file", getattr(p, "arquivo", None))).is_file()
+            if p.validated and p.file and Path(p.file).is_file()
         )
         missing = [e for e in externals if which(e) is None]
         state: CapabilityState = "unavailable"

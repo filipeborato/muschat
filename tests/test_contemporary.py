@@ -9,14 +9,14 @@ from fractions import Fraction as F
 import pytest
 
 from muschat.instruments import instrument
-from muschat.notacao.lilypond import para_lilypond
-from muschat.notacao.musicxml import de_musicxml, para_musicxml
+from muschat.notation.lilypond import to_lilypond
+from muschat.notation.musicxml import from_musicxml, to_musicxml
 from muschat.plan import Operation, Plan, Selection
 from muschat.procedures import CATALOG
 from muschat.procedures.common import unplayable_techniques
 from muschat.recipes import RECIPES, documentation, expand_recipe
 from muschat.references import generate_recipe_references
-from muschat.score_ir import Measure, Note, Part, Pitch, Provenance, Rest, ScoreIR, Tuplet, Voice, ties_to, to_legacy_musicir
+from muschat.score_ir import Measure, Note, Part, Pitch, Provenance, Rest, ScoreIR, Tuplet, Voice, ties_to
 
 
 def material() -> ScoreIR:
@@ -65,10 +65,9 @@ def run_proc(name: str, current: ScoreIR | None = None, selection: Selection | N
     assert proc.fn is not None
     updated = proc.fn(current, plan, complete, random.Random(17))
     updated = ScoreIR.model_validate(updated.model_dump())
-    legacy = to_legacy_musicir(updated)
-    xml = para_musicxml(legacy)
-    assert de_musicxml(xml.encode())[0]
-    assert para_lilypond(legacy)
+    xml = to_musicxml(updated)
+    assert from_musicxml(xml.encode())[0]
+    assert to_lilypond(updated)
     return updated
 
 
@@ -100,8 +99,7 @@ def test_detune_curves_and_glissandi_without_crossing_rests():
     osc = run_proc("detune", before, curve=1, resolution=2)
     ds = [b.pitches[0].midicents - a.pitches[0].midicents for a, b in zip(orig, notes(osc))]
     assert min(ds) < 0 < max(ds)
-    legacy = to_legacy_musicir(updated)
-    assert "glissando" in para_musicxml(legacy) and "glissando" in para_lilypond(legacy)["grade"]
+    assert "glissando" in to_musicxml(updated) and "glissando" in to_lilypond(updated)["score"]
 
 
 def test_idiomatic_noise_preserves_rhythm_dynamics_and_filters_family():
@@ -113,7 +111,7 @@ def test_idiomatic_noise_preserves_rhythm_dynamics_and_filters_family():
     assert [(e.id, e.start, e.duration, getattr(e, "dynamic", None)) for _, _, e in updated.events()] == [
         (e.id, e.start, e.duration, getattr(e, "dynamic", None)) for _, _, e in before.events()
     ]
-    assert "<notehead>x</notehead>" in para_musicxml(to_legacy_musicir(updated))
+    assert "<notehead>x</notehead>" in to_musicxml(updated)
 
 
 def test_rarefy_removes_attacks_prolongs_and_produces_playable_harmonics():
@@ -238,11 +236,11 @@ def test_rarefy_absorbs_notes_inside_tuplet():
 
 def test_generate_recipes_across_four_reference_pieces_with_metrics(tmp_path):
     folder = generate_recipe_references("recipes", root=tmp_path)
-    data = json.loads((folder / "metricas.json").read_text(encoding="utf-8"))
+    data = json.loads((folder / "metrics.json").read_text(encoding="utf-8"))
     assert len(data) == 24
     assert len(list(folder.glob("*.musicxml"))) == 24
     for name, m in data.items():
         if name.endswith("sciarrino"):
-            assert m["after"]["ataques_por_seminima_somando_partes"] < m["before"]["ataques_por_seminima_somando_partes"]
+            assert m["after"]["attacks_per_quarter_summed"] < m["before"]["attacks_per_quarter_summed"]
         if name.endswith("lachenmann"):
-            assert not m["after"]["tecnicas_intocaveis"]
+            assert not m["after"]["unplayable_techniques"]

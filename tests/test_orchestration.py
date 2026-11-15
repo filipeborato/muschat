@@ -4,13 +4,13 @@ import random
 
 import pytest
 
-from muschat.notacao.lilypond import para_lilypond
-from muschat.notacao.musicxml import para_musicxml
+from muschat.notation.lilypond import to_lilypond
+from muschat.notation.musicxml import to_musicxml
 from muschat.orchestration import adapt_instrumentation
 from muschat.plan import Operation, Plan
 from muschat.procedures import CATALOG
 from muschat.procedures.common import unplayable_techniques
-from muschat.score_ir import Note, ScoreIR, to_legacy_musicir
+from muschat.score_ir import Note, ScoreIR
 from tests.test_contemporary import material, run_proc
 
 
@@ -39,8 +39,7 @@ def test_quartet_becomes_duo_with_ranges_clefs_and_active_lines():
         )
     assert not unplayable_techniques(duo)
     assert source.model_dump_json() == before
-    legacy = to_legacy_musicir(duo)
-    assert para_musicxml(legacy) and para_lilypond(legacy)
+    assert to_musicxml(duo) and to_lilypond(duo)
 
 
 def test_expansion_renames_ids_and_preserves_tuplets():
@@ -53,8 +52,7 @@ def test_expansion_renames_ids_and_preserves_tuplets():
             (e.start, e.duration) for e in source.parts[0].voices[0].events
         ]
         assert len(part.voices[0].tuplets) == len(source.parts[0].voices[0].tuplets)
-    legacy = to_legacy_musicir(duo)
-    assert para_musicxml(legacy) and para_lilypond(legacy)
+    assert to_musicxml(duo) and to_lilypond(duo)
 
 
 def test_entirely_silent_source_does_not_invent_notes():

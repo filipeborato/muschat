@@ -5,22 +5,19 @@ side-by-side for composer comparison (listening, reading, descriptive metrics). 
 """
 
 import json
-import random
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from muschat.composition import Composition
-from muschat.constraints import check_constraints
-from muschat.exportacao import metricas as _legacy_metrics
-from muschat.notacao.lilypond import detectar, gravar, para_lilypond
-from muschat.notacao.musicxml import para_musicxml
-from muschat.plan import Plan
-from muschat.procedures import CATALOG
-from muschat.procedures.common import unplayable_techniques
-from muschat.recipes import RECIPES, expand_recipe
-from muschat.score_ir import Note, Provenance, ScoreIR, to_legacy_musicir
+from muschat.export import metrics
+from muschat.notation.lilypond import detect_lilypond, engrave, to_lilypond
+from muschat.notation.musicxml import to_musicxml
+from muschat.orchestrator import compose
+from muschat.recipes import RECIPES
+from muschat.score_ir import ScoreIR
 
-REFERENCES_DIR = Path(".muschat") / "referencias"
+REFERENCES_DIR = Path(".muschat") / "references"
 
 
 def _op(procedure: str, **parameters: float) -> dict:
@@ -97,34 +94,34 @@ CHECKLIST = """\
 """
 
 
+class _FixedPlanGenerator:
+    def __init__(self, plan: dict):
+        self.text = json.dumps(plan)
+
+    def generate_content(self, *, model, contents, config):
+        return SimpleNamespace(text=self.text)
+
+
+class _EmptyChat:
+    def get_history(self):
+        return []
+
+    def send_message(self, message, config=None):
+        return SimpleNamespace(text="")
+
+
 def run_fixed_plan(request: str, raw_plan: dict, composition: Composition) -> ScoreIR:
-    """Execute a deterministic Python-only plan directly on `Composition`."""
-    plan = expand_recipe(Plan.model_validate({"goal": request, **raw_plan}))
-    ir = composition.current.ir if composition.current else None
-    seed = plan.seed if plan.seed is not None else 1
-    steps: list[dict] = []
-    for k, op in enumerate(plan.operations):
-        rng = random.Random(f"{seed}/{k}")
-        spec = CATALOG[op.procedure]
-        if spec.requires_score and ir is None:
-            raise RuntimeError(f"{op.procedure} requires an existing composition")
-        assert spec.fn is not None
-        params = {name: r.default for name, r in spec.parameters.items()} | op.as_dict()
-        ir = spec.fn(ir, plan, params, rng)
-        prov = Provenance(source="algorithm", author="Python", operation=op.procedure)
-        for _, _, ev in ir.events():
-            if isinstance(ev, Note) and ev.provenance.operation is None:
-                ev.provenance = prov
-        steps.append({"step": k + 1, "procedure": op.procedure, "engine": "python", "parameters": params})
-    assert ir is not None
-    violations = [*[str(v) for v in check_constraints(ir, plan.constraints)], *unplayable_techniques(ir)]
-    composition.add(
-        ir,
+    """Execute a deterministic Python-only plan via `compose` without calling an external LLM."""
+    result = compose(
         request,
-        {"seed": seed, "plan": plan.model_dump(mode="json"), "steps": steps, "violations": violations},
-        previous=composition.index,
+        composition,
+        generator=_FixedPlanGenerator({"goal": request, **raw_plan}),
+        chat=_EmptyChat(),
+        model="fixed-reference",
     )
-    return ir
+    if result.version is None:
+        raise RuntimeError(result.summary)
+    return result.version.ir
 
 
 def generate_references(label: str, *, root: Path = REFERENCES_DIR, lilypond=None) -> Path:
@@ -136,14 +133,17 @@ def generate_references(label: str, *, root: Path = REFERENCES_DIR, lilypond=Non
     for name, request, plan_dict in PIECES:
         comp = Composition()
         ir = run_fixed_plan(request, plan_dict, comp)
-        legacy_ir = to_legacy_musicir(ir)
-        (directory / f"{name}.musicxml").write_text(para_musicxml(legacy_ir), encoding="utf-8")
+        (directory / f"{name}.musicxml").write_text(to_musicxml(ir), encoding="utf-8")
         (directory / f"{name}.json").write_text(comp.to_json(), encoding="utf-8")
-        for key, pdf in gravar(para_lilypond(legacy_ir), lilypond).pdfs.items():
+        for key, pdf in engrave(to_lilypond(ir), lilypond).pdfs.items():
             (directory / f"{name}-{key}.pdf").write_bytes(pdf)
-        all_metrics[name] = {"request": request, "summary": comp.current.summary if comp.current else "", **_legacy_metrics(legacy_ir)}
+        all_metrics[name] = {
+            "request": request,
+            "summary": comp.current.summary if comp.current else "",
+            **metrics(ir),
+        }
         checklist.append(f"## {name}\n\n{request}\n\n{CHECKLIST}")
-    (directory / "metricas.json").write_text(json.dumps(all_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    (directory / "metrics.json").write_text(json.dumps(all_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     (directory / "checklist.md").write_text("\n".join(checklist), encoding="utf-8")
     return directory
 
@@ -157,7 +157,6 @@ def generate_recipe_references(label: str, *, root: Path = REFERENCES_DIR, lilyp
     for name, request, plan_dict in PIECES:
         base = Composition()
         original = run_fixed_plan(request, plan_dict, base)
-        legacy_original = to_legacy_musicir(original)
         for recipe_name, recipe in RECIPES.items():
             comp = Composition()
             comp.add(original, "original reference", {}, previous=None)
@@ -169,20 +168,19 @@ def generate_recipe_references(label: str, *, root: Path = REFERENCES_DIR, lilyp
                 "operations": [_op(op, **params) for op, params in recipe.chain],
             }
             ir = run_fixed_plan(recipe_name, transform, comp)
-            legacy_ir = to_legacy_musicir(ir)
             key = f"{name}-{recipe_name}"
-            (directory / f"{key}.musicxml").write_text(para_musicxml(legacy_ir), encoding="utf-8")
+            (directory / f"{key}.musicxml").write_text(to_musicxml(ir), encoding="utf-8")
             (directory / f"{key}.json").write_text(comp.to_json(), encoding="utf-8")
-            sources = para_lilypond(legacy_ir)
-            (directory / f"{key}.ly").write_text(sources["grade"], encoding="utf-8")
+            sources = to_lilypond(ir)
+            (directory / f"{key}.ly").write_text(sources["score"], encoding="utf-8")
             if lilypond:
-                engraved = gravar({"grade": sources["grade"]}, lilypond)
-                if engraved.aviso:
-                    raise RuntimeError(f"{key}: {engraved.aviso}")
-                (directory / f"{key}.pdf").write_bytes(engraved.pdfs["grade"])
-            all_metrics[key] = {"before": _legacy_metrics(legacy_original), "after": _legacy_metrics(legacy_ir)}
+                engraved = engrave({"score": sources["score"]}, lilypond)
+                if engraved.warning:
+                    raise RuntimeError(f"{key}: {engraved.warning}")
+                (directory / f"{key}.pdf").write_bytes(engraved.pdfs["score"])
+            all_metrics[key] = {"before": metrics(original), "after": metrics(ir)}
             checklist.append(f"## {key}\n\n{CHECKLIST}")
-    (directory / "metricas.json").write_text(json.dumps(all_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    (directory / "metrics.json").write_text(json.dumps(all_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     (directory / "checklist.md").write_text("\n".join(checklist), encoding="utf-8")
     return directory
 
@@ -191,4 +189,4 @@ if __name__ == "__main__":
     if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--recipes"):
         sys.exit("usage: uv run python -m muschat.references <label> [--recipes]")
     runner = generate_recipe_references if len(sys.argv) == 3 else generate_references
-    print(runner(sys.argv[1], lilypond=detectar()).resolve())
+    print(runner(sys.argv[1], lilypond=detect_lilypond()).resolve())

@@ -1,4 +1,4 @@
-"""Ingestão do corpus: `uv run python -m muschat.rag.ingest [--corpus corpus] [--index index]`."""
+"""Corpus ingestion: `uv run python -m muschat.rag.ingest [--corpus corpus] [--index index]`."""
 
 import argparse
 import hashlib
@@ -11,52 +11,53 @@ from pathlib import Path
 
 import numpy as np
 
-from muschat.rag.indice import VERSAO, Embedder, Indice, carregar, construir, salvar
-from muschat.rag.leitores import EXTENSOES, ler
+from muschat.rag.index import VERSION, Embedder, Index, build_index, load_index, save_index
+from muschat.rag.readers import EXTENSIONS, read_file
 
 
-def _arquivos(corpus: Path) -> list[Path]:
+def _corpus_files(corpus: Path) -> list[Path]:
     return sorted(
-        a for a in corpus.rglob("*")
-        if a.is_file() and not any(p.startswith(".") for p in a.relative_to(corpus).parts)
+        p
+        for p in corpus.rglob("*")
+        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(corpus).parts)
     )
 
 
-def ingerir(corpus: Path, pasta_indice: Path, embedder: Embedder, modelo: str) -> Indice:
-    """Reconstrói o índice a partir do corpus (idempotente); só embute chunks novos ou alterados."""
+def ingest(corpus: Path, index_dir: Path, embedder: Embedder, model: str) -> Index:
+    """Rebuild the index from `corpus` (idempotent); embeds only new or modified chunks."""
     chunks, hashes = [], {}
-    for arq in _arquivos(corpus):
+    for path in _corpus_files(corpus):
         try:
-            lidos = ler(arq, corpus)
-        except Exception as exc:  # XML/PDF/encoding quebrado: diga qual arquivo
-            raise ValueError(f"falha ao ler {arq}: {exc}") from exc
-        if lidos:
-            chunks += lidos
-            hashes[arq.relative_to(corpus).as_posix()] = hashlib.sha256(arq.read_bytes()).hexdigest()
+            read_chunks = read_file(path, corpus)
+        except Exception as exc:
+            raise ValueError(f"failed to read {path}: {exc}") from exc
+        if read_chunks:
+            chunks += read_chunks
+            hashes[path.relative_to(corpus).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     if not chunks:
-        raise ValueError(f"nenhum arquivo legível ({', '.join(EXTENSOES)}) em {corpus}")
-    indice = construir(chunks, embedder, _cache(pasta_indice, modelo))
-    salvar(indice, pasta_indice, {"modelo": modelo, "arquivos": hashes})
-    return indice
+        raise ValueError(f"no readable files ({', '.join(EXTENSIONS)}) in {corpus}")
+    index = build_index(chunks, embedder, _load_cache(index_dir, model))
+    save_index(index, index_dir, {"model": model, "files": hashes})
+    return index
 
 
-def _cache(pasta_indice: Path, modelo: str) -> dict[str, np.ndarray]:
-    """Vetores do índice anterior, se feito com o mesmo modelo e formato (senão reembute tudo)."""
+def _load_cache(index_dir: Path, model: str) -> dict[str, np.ndarray]:
+    """Reuse vectors from the previous index if built with the same model and schema version."""
     try:
-        anterior = carregar(pasta_indice)
-    except (ValueError, OSError):  # índice corrompido: ignora, a ingestão o substitui
+        previous = load_index(index_dir)
+    except (ValueError, OSError):
         return {}
-    if not anterior or anterior.manifest.get("modelo") != modelo or anterior.manifest.get("versao") != VERSAO:
+    if not previous or previous.manifest.get("model") != model or previous.manifest.get("version") != VERSION:
         return {}
-    return {c.texto_embutido: v for c, v in zip(anterior.chunks, anterior.vetores)}
+    return {c.embedded_text: v for c, v in zip(previous.chunks, previous.vectors)}
 
 
 TIMEOUT_MS = 60_000
 
 
-def _aguardar_cota(segundos: float) -> None:
-    print(f"  cota de embeddings por minuto esgotada: aguardando {segundos:.0f}s...", flush=True)
-    time.sleep(segundos)
+def _wait_for_quota(seconds: float) -> None:
+    print(f"  per-minute embedding quota exhausted: waiting {seconds:.0f}s...", flush=True)
+    time.sleep(seconds)
 
 
 def main() -> int:
@@ -64,43 +65,42 @@ def main() -> int:
     from google import genai
     from google.genai import errors, types
 
-    from muschat.config import ChaveAusente, carregar_config
-    from muschat.rag.indice import GeminiEmbedder
+    from muschat.config import MissingApiKeyError, load_config
+    from muschat.rag.index import GeminiEmbedder
 
-    parser = argparse.ArgumentParser(description="Indexa o corpus do Muschat.")
+    parser = argparse.ArgumentParser(description="Index the Muschat corpus.")
     parser.add_argument("--corpus", type=Path, default=Path("corpus"))
     parser.add_argument("--index", type=Path, default=Path("index"))
     args = parser.parse_args()
 
     if not args.corpus.is_dir():
-        print(f"Pasta do corpus não encontrada: {args.corpus}", file=sys.stderr)
+        print(f"Corpus directory not found: {args.corpus}", file=sys.stderr)
         return 1
     load_dotenv()
-    segredos = Path(".streamlit/secrets.toml")
+    secrets = Path(".streamlit/secrets.toml")
     try:
-        cfg = carregar_config(dict(os.environ), tomllib.loads(segredos.read_text("utf-8")) if segredos.exists() else {})
-    except ChaveAusente:
-        print("Defina GEMINI_API_KEY (.env, ambiente ou .streamlit/secrets.toml).", file=sys.stderr)
+        cfg = load_config(dict(os.environ), tomllib.loads(secrets.read_text("utf-8")) if secrets.exists() else {})
+    except MissingApiKeyError:
+        print("Set GEMINI_API_KEY (.env, environment, or .streamlit/secrets.toml).", file=sys.stderr)
         return 1
 
-    # 429 fica com o GeminiEmbedder (espera o retryDelay); o SDK só repete falhas transitórias
-    transitorias = [408, 500, 502, 503, 504]
+    transient_codes = [408, 500, 502, 503, 504]
     retry = types.HttpOptions(
-        timeout=TIMEOUT_MS,  # sem timeout uma conexão presa trava a ingestão indefinidamente
-        retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=transitorias),
+        timeout=TIMEOUT_MS,
+        retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=transient_codes),
     )
-    cliente = genai.Client(api_key=cfg.api_key, http_options=retry)
+    client = genai.Client(api_key=cfg.api_key, http_options=retry)
     try:
-        embedder = GeminiEmbedder(cliente.models, cfg.embed_model, dormir=_aguardar_cota)
-        print(f"Indexando {args.corpus}/ com {cfg.embed_model}...", flush=True)
-        indice = ingerir(args.corpus, args.index, embedder, cfg.embed_model)
+        embedder = GeminiEmbedder(client.models, cfg.embed_model, sleep=_wait_for_quota)
+        print(f"Indexing {args.corpus}/ with {cfg.embed_model}...", flush=True)
+        index = ingest(args.corpus, args.index, embedder, cfg.embed_model)
     except errors.ClientError as exc:
         if exc.code != 429:
             raise
         print(
-            f"Cota de embeddings do {cfg.embed_model} esgotada (provavelmente a diária do free tier). "
-            "Tente mais tarde ou use outro modelo em GEMINI_EMBED_MODEL (ex.: gemini-embedding-001). "
-            "O índice anterior foi mantido.",
+            f"Embedding quota for {cfg.embed_model} exhausted (likely daily free-tier quota). "
+            "Try again later or set another model in GEMINI_EMBED_MODEL (e.g., gemini-embedding-001). "
+            "The previous index was kept.",
             file=sys.stderr,
         )
         return 1
@@ -108,10 +108,10 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    print(f"{len(indice.chunks)} chunks de {len(indice.manifest['arquivos'])} arquivos -> {args.index}/")
-    for chave in ("tipo", "familia"):
-        contagem = Counter(getattr(c, chave) or "(nenhuma)" for c in indice.chunks)
-        print(f"  por {chave}: " + ", ".join(f"{k} {v}" for k, v in contagem.most_common()))
+    print(f"{len(index.chunks)} chunks from {len(index.manifest['files'])} files -> {args.index}/")
+    for field in ("kind", "family"):
+        counts = Counter(getattr(c, field) or "(none)" for c in index.chunks)
+        print(f"  by {field}: " + ", ".join(f"{k} {v}" for k, v in counts.most_common()))
     return 0
 
 

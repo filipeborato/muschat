@@ -12,6 +12,7 @@ Mode = Literal["auto", "python", "openmusic", "hybrid", "notagen"]
 
 _MODE_ALIASES: dict[str, Mode] = {
     "auto": "auto",
+    "automatic": "auto",
     "automatico": "auto",
     "python": "python",
     "openmusic": "openmusic",

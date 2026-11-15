@@ -3,8 +3,7 @@
 import re
 
 _TAGS = re.compile(
-    r"</?\s*(user_question|internal_analysis|excerpts?|current_composition|operation|"
-    r"pergunta_usuario|analise_interna|trechos?|composicao_atual|operacao)\b[^>]*>",
+    r"</?\s*(user_question|internal_analysis|excerpts?|current_composition|operation|sections)\b[^>]*>",
     re.IGNORECASE,
 )
 

@@ -6,23 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from muschat.composicao import Composicao
-from muschat.notacao.musicxml import para_musicxml
-from muschat.notagen import (
-    WEIGHTS_FILE,
-    LocalNotaGen,
-    NotaGenInstallation,
-    detect_notagen,
-)
-from muschat.orquestrador import compor, reaplicar
+from muschat.composition import Composition
+from muschat.notagen import WEIGHTS_FILE, LocalNotaGen, NotaGenInstallation, detect_notagen
+from muschat.notation.musicxml import to_musicxml
+from muschat.orchestrator import compose, reapply
 from muschat.plan import Operation, Plan
-from muschat.plano import Plano
+from muschat.reasoning import respond
 from muschat.registry import detect_capabilities
-from muschat.registro import detectar
-from muschat.roteador import rotear
 from muschat.router import route
-from tests.test_composicao import ChatFake, GeradorFake, _plano
-from tests.test_leitura_musicxml import ATRIBUTOS, _nota, _xml
+from tests.test_composition import FakeChat, FakeGenerator, _plan
+from tests.test_musicxml_reader import ATTRIBUTES, _note_xml, _xml
+from tests.test_reasoning import ANALYSIS_OK, FakeChat as LogChat, FakeRetriever as LogRet
 
 CONDITIONS = ["Romantic_Ravel, Maurice_Chamber", "Classical_Mozart, Wolfgang Amadeus_Keyboard"]
 
@@ -40,43 +34,36 @@ def _installation(tmp_path: Path, *, weights: bool = True):
 
 
 def _registry(notagen):
-    return detectar(lilypond=None, openmusic=None, abjad_versao="3.31", which=lambda e: None, notagen=notagen)
+    return detect_capabilities(lilypond=None, openmusic=None, abjad_version="3.31", which=lambda e: None, notagen=notagen)
 
 
 def test_detection_reads_conditions_or_reports_missing_item(tmp_path):
     ok = _installation(tmp_path)
     assert isinstance(ok, NotaGenInstallation) and ok.conditions == tuple(CONDITIONS)
-    assert "weights" in detect_notagen(ok.python, str(tmp_path / "empty"))
-    assert "NOTAGEN_PYTHON" in detect_notagen(str(tmp_path / "missing.exe"), str(tmp_path / "NotaGen"))
+    missing_weights = detect_notagen(ok.python, str(tmp_path / "empty"))
+    assert isinstance(missing_weights, str) and "weights" in missing_weights
+    missing_py = detect_notagen(str(tmp_path / "missing.exe"), str(tmp_path / "NotaGen"))
+    assert isinstance(missing_py, str) and "NOTAGEN_PYTHON" in missing_py
 
 
 def test_detected_notagen_is_automatic_engine_with_conditions(tmp_path):
     inst = _installation(tmp_path)
-    reg_en = detect_capabilities(
-        lilypond=None, openmusic=None, abjad_version="3.31", which=lambda e: None, notagen=inst
-    )
-    cap_en = reg_en.capability("NotaGen")
-    assert cap_en is not None and cap_en.state == "automatic"
-    assert cap_en.procedures == ("generate_notagen",) and cap_en.options == tuple(CONDITIONS)
-    assert "generate_notagen" in reg_en.available_procedures()
-    plan_en = Plan(goal="test", operations=[Operation(procedure="generate_notagen", condition=CONDITIONS[0])])
-    decision_en = route(plan_en, "auto", reg_en)
-    assert [s.engine for s in decision_en.steps] == ["notagen"]
-
     reg = _registry(inst)
-    cap = reg.capacidade("NotaGen")
-    assert cap.estado == "automatico" and cap.procedimentos == ("gerar_notagen",) and cap.opcoes == tuple(CONDITIONS)
-    assert "gerar_notagen" in reg.disponiveis()
-    plano = Plano.model_validate(_plano("gerar_notagen"))
-    decisao = rotear(plano, "automatico", reg)
-    assert [e.motor for e in decisao.etapas] == ["notagen"]
+    cap = reg.capability("NotaGen")
+    assert cap is not None and cap.state == "automatic"
+    assert cap.procedures == ("generate_notagen",) and cap.options == tuple(CONDITIONS)
+    assert "generate_notagen" in reg.available_procedures()
+    plan = Plan(goal="test", operations=[Operation(procedure="generate_notagen", condition=CONDITIONS[0])])
+    decision = route(plan, "auto", reg)
+    assert [s.engine for s in decision.steps] == ["notagen"]
 
 
 def test_missing_notagen_is_unavailable_with_reason_and_disabled_is_absent(tmp_path):
     reg = _registry(_installation(tmp_path, weights=False))
-    cap = reg.capacidade("NotaGen")
-    assert cap.estado == "indisponivel" and "weights" in cap.motivo and "gerar_notagen" not in reg.disponiveis()
-    assert _registry(None).capacidade("NotaGen") is None
+    cap = reg.capability("NotaGen")
+    assert cap is not None and cap.state == "unavailable" and "weights" in cap.reason
+    assert "generate_notagen" not in reg.available_procedures()
+    assert _registry(None).capability("NotaGen") is None
 
 
 # --- Composition step integration -------------------------------------------------------------------------------------
@@ -91,7 +78,7 @@ class FakeComposer:
         if self.failure:
             raise ValueError(self.failure)
         bars = "".join(
-            f'<measure number="{n}">{ATRIBUTOS if n == 1 else ""}{_nota("C", 4, 6, "half", extra="<dot/>")}</measure>'
+            f'<measure number="{n}">{ATTRIBUTES if n == 1 else ""}{_note_xml("C", 4, 6, "half", extra="<dot/>")}</measure>'
             for n in range(1, measures + 1)
         )
         return _xml(
@@ -100,23 +87,20 @@ class FakeComposer:
             '<score-part id="P2"><part-name>Cello</part-name></score-part>',
         )
 
-    def gerar(self, condicao: str, compassos: int, semente: int) -> bytes:
-        return self.generate(condicao, compassos, semente)
 
-
-def _generate(tmp_path, composer, *extras, condition=CONDITIONS[0], instruments=("violino", "violoncelo"), comp=None):
-    plan = _plano("gerar_notagen", parametros={"compassos": 2}, instrumentos=list(instruments))
-    plan["operacoes"][0]["condicao"] = condition
-    plan["operacoes"] += list(extras)
-    comp = comp or Composicao()
-    result = compor(
+def _generate(tmp_path, composer, *extras, condition=CONDITIONS[0], instruments=("violin", "cello"), comp=None):
+    plan = _plan("generate_notagen", parameters={"measures": 2}, instruments=list(instruments))
+    plan["operations"][0]["condition"] = condition
+    plan["operations"] += list(extras)
+    comp = comp or Composition()
+    result = compose(
         "request",
         comp,
-        gerador=GeradorFake(plan),
-        chat=ChatFake(),
-        modelo="m",
-        registro=_registry(_installation(tmp_path)),
-        compositor=composer,
+        generator=FakeGenerator(plan),
+        chat=FakeChat(),
+        model="m",
+        registry=_registry(_installation(tmp_path)),
+        composer=composer,
     )
     return comp, result
 
@@ -124,166 +108,173 @@ def _generate(tmp_path, composer, *extras, condition=CONDITIONS[0], instruments=
 def test_notagen_generates_external_version_with_plan_instruments(tmp_path):
     fake = FakeComposer()
     _, result = _generate(tmp_path, fake)
-    assert result.versao is not None, result.resumo
+    assert result.version is not None, result.summary
     assert fake.calls == [(CONDITIONS[0], 2, fake.calls[0][2])] and isinstance(fake.calls[0][2], int)
-    events = [e for _, _, e in result.versao.ir.eventos()]
-    assert {(e.proveniencia.origem, e.proveniencia.autor) for e in events} == {("externo", "NotaGen-X")}
-    assert [p.instrumento for p in result.versao.ir.partes] == ["Violino", "Violoncelo"]
-    assert result.versao.experimento["etapas"][0]["motor"] == "notagen"
-    assert list(result.versao.experimento["saidas_externas"]) == ["0"]
+    events = [e for _, _, e in result.version.ir.events()]
+    assert {(e.provenance.source, e.provenance.author) for e in events} == {("external", "NotaGen-X")}
+    assert [p.instrument for p in result.version.ir.parts] == ["Violin", "Cello"]
+    assert result.version.experiment["steps"][0]["engine"] == "notagen"
+    assert list(result.version.experiment["external_outputs"]) == [0]
 
 
 def test_notagen_material_flows_into_python_transformations(tmp_path):
-    transpose_op = {"procedimento": "transpor", "parametros": [{"nome": "intervalo", "valor": 50}]}
+    transpose_op = {"procedure": "transpose", "parameters": [{"name": "interval", "value": 50}]}
     _, result = _generate(tmp_path, FakeComposer(), transpose_op)
-    assert [e["motor"] for e in result.versao.experimento["etapas"]] == ["notagen", "python"]
-    assert result.versao.ir.partes[0].vozes[0].eventos[0].alturas[0].midicents == 6050
+    assert result.version is not None
+    assert [s["engine"] for s in result.version.experiment["steps"]] == ["notagen", "python"]
+    assert result.version.ir.parts[0].voices[0].events[0].pitches[0].midicents == 6050
 
 
 def test_notagen_mode_requires_local_call_and_executes_transformation(tmp_path):
     reg = _registry(_installation(tmp_path))
     fake = FakeComposer()
-    plan = _plano("gerar_notagen", parametros={"compassos": 2}, instrumentos=["violino", "violoncelo"])
-    plan["operacoes"][0]["condicao"] = CONDITIONS[0]
-    plan["operacoes"].append({"procedimento": "transpor", "parametros": [{"nome": "intervalo", "valor": 50}]})
-    comp = Composicao()
-    gen = GeradorFake(plan)
-    result = compor(
-        "componha", comp, gerador=gen, chat=ChatFake(), modelo="m", modo="notagen", registro=reg, compositor=fake
+    plan = _plan("generate_notagen", parameters={"measures": 2}, instruments=["violin", "cello"])
+    plan["operations"][0]["condition"] = CONDITIONS[0]
+    plan["operations"].append({"procedure": "transpose", "parameters": [{"name": "interval", "value": 50}]})
+    comp = Composition()
+    gen = FakeGenerator(plan)
+    result = compose(
+        "compose", comp, generator=gen, chat=FakeChat(), model="m", mode="notagen", registry=reg, composer=fake
     )
-    assert result.versao is not None, result.resumo
+    assert result.version is not None, result.summary
     assert len(fake.calls) == 1
-    assert [e["motor"] for e in result.versao.experimento["etapas"]] == ["notagen", "python"]
-    assert "Comece obrigatoriamente por gerar_notagen" in gen.chamadas[0].config.system_instruction
-    result = compor(
-        "componha",
+    assert [s["engine"] for s in result.version.experiment["steps"]] == ["notagen", "python"]
+    assert "Start mandatorily with generate_notagen" in gen.calls[0].config.system_instruction
+    result = compose(
+        "compose",
         comp,
-        gerador=GeradorFake(_plano()),
-        chat=ChatFake(),
-        modelo="m",
-        modo="notagen",
-        registro=reg,
-        compositor=fake,
+        generator=FakeGenerator(_plan()),
+        chat=FakeChat(),
+        model="m",
+        mode="notagen",
+        registry=reg,
+        composer=fake,
     )
-    assert result.versao is None and "não chamou" in result.resumo and len(comp.versoes) == 1
+    assert result.version is None and "did not invoke" in result.summary and len(comp.versions) == 1
 
 
 def test_unknown_condition_is_refused_without_running_model(tmp_path):
     fake = FakeComposer()
     _, result = _generate(tmp_path, fake, condition="Contemporary_Lachenmann_Chamber")
-    assert result.versao is None and "condição" in result.resumo and fake.calls == []
+    assert result.version is None and "condition" in result.summary and fake.calls == []
 
 
 def test_model_failure_becomes_refusal_and_nothing_is_saved(tmp_path):
     comp, result = _generate(tmp_path, FakeComposer(failure="GPU out of memory"))
-    assert result.versao is None and "GPU out of memory" in result.resumo and comp.versoes == []
+    assert result.version is None and "GPU out of memory" in result.summary and comp.versions == []
     comp, result = _generate(tmp_path, None)
-    assert result.versao is None and "NotaGen" in result.resumo and comp.versoes == []
+    assert result.version is None and "NotaGen" in result.summary and comp.versions == []
 
 
 def test_reapply_reuses_stored_musicxml_and_regenerates_only_if_parameter_changes(tmp_path):
     fake = FakeComposer()
     comp, result = _generate(tmp_path, fake)
-    same = reaplicar(comp, [{"compassos": 2}], registro=_registry(_installation(tmp_path / "b")), compositor=fake)
-    assert same.versao is not None and len(fake.calls) == 1
-    assert para_musicxml(same.versao.ir) == para_musicxml(result.versao.ir)
-    longer = reaplicar(comp, [{"compassos": 3}], registro=_registry(_installation(tmp_path / "c")), compositor=fake)
-    assert len(fake.calls) == 2 and len(longer.versao.ir.compassos) == 3
+    assert result.version is not None
+    same = reapply(comp, [{"measures": 2}], registry=_registry(_installation(tmp_path / "b")), composer=fake)
+    assert same.version is not None and len(fake.calls) == 1
+    assert to_musicxml(same.version.ir) == to_musicxml(result.version.ir)
+    longer = reapply(comp, [{"measures": 3}], registry=_registry(_installation(tmp_path / "c")), composer=fake)
+    assert longer.version is not None and len(fake.calls) == 2 and len(longer.version.ir.measures) == 3
 
 
 def test_planner_prompt_lists_conditions_only_when_notagen_is_available(tmp_path):
-    gen = GeradorFake(_plano())
-    compor(
-        "pedido", Composicao(), gerador=gen, chat=ChatFake(), modelo="m", registro=_registry(_installation(tmp_path))
-    )
-    system = gen.chamadas[0].config.system_instruction
-    assert "gerar_notagen" in system and CONDITIONS[0] in system
-    gen = GeradorFake(_plano())
-    compor("pedido", Composicao(), gerador=gen, chat=ChatFake(), modelo="m", registro=_registry("no GPU"))
-    assert "gerar_notagen" not in gen.chamadas[0].config.system_instruction
+    gen = FakeGenerator(_plan())
+    compose("request", Composition(), generator=gen, chat=FakeChat(), model="m", registry=_registry(_installation(tmp_path)))
+    system = gen.calls[0].config.system_instruction
+    assert "- generate_notagen:" in system and CONDITIONS[0] in system
+    gen = FakeGenerator(_plan())
+    compose("request", Composition(), generator=gen, chat=FakeChat(), model="m", registry=_registry("no GPU"))
+    assert "- generate_notagen:" not in gen.calls[0].config.system_instruction
 
 
 def test_installation_without_prompts_file_returns_reason(tmp_path):
     inst = _installation(tmp_path)
+    assert isinstance(inst, NotaGenInstallation)
     (Path(inst.directory) / "gradio" / "prompts.txt").unlink()
-    assert "prompts.txt" in detect_notagen(inst.python, inst.directory)
+    res = detect_notagen(inst.python, inst.directory)
+    assert isinstance(res, str) and "prompts.txt" in res
 
 
 def test_manual_python_mode_with_generate_notagen_refuses_with_alternative(tmp_path):
-    plan = _plano("gerar_notagen", parametros={"compassos": 2})
-    plan["operacoes"][0]["condicao"] = CONDITIONS[0]
+    plan = _plan("generate_notagen", parameters={"measures": 2})
+    plan["operations"][0]["condition"] = CONDITIONS[0]
     fake = FakeComposer()
-    result = compor(
-        "pedido",
-        Composicao(),
-        gerador=GeradorFake(plan),
-        chat=ChatFake(),
-        modelo="m",
-        modo="python",
-        registro=_registry(_installation(tmp_path)),
-        compositor=fake,
+    result = compose(
+        "request",
+        Composition(),
+        generator=FakeGenerator(plan),
+        chat=FakeChat(),
+        model="m",
+        mode="python",
+        registry=_registry(_installation(tmp_path)),
+        composer=fake,
     )
-    assert result.versao is None and "NotaGen (automático)" in result.resumo and fake.calls == []
+    assert result.version is None and "NotaGen (automatic)" in result.summary and fake.calls == []
 
 
 def test_different_part_count_is_adapted_and_documented(tmp_path):
     fake = FakeComposer()
-    comp, result = _generate(tmp_path, fake, instruments=("flauta", "oboe", "fagote"))
-    assert result.versao is not None and len(comp.versoes) == 1
-    assert [p.instrumento for p in result.versao.ir.partes] == ["Flauta", "Oboe", "Fagote"]
-    assert "orquestração adaptada de 2 para 3 partes" in result.resumo
-    redone = reaplicar(
+    comp, result = _generate(tmp_path, fake, instruments=("flute", "oboe", "bassoon"))
+    assert result.version is not None and len(comp.versions) == 1
+    assert [p.instrument for p in result.version.ir.parts] == ["Flute", "Oboe", "Bassoon"]
+    assert "orchestration adapted from 2 to 3 parts" in result.summary
+    redone = reapply(
         comp,
-        result.versao.experimento["parametros"],
-        registro=_registry(_installation(tmp_path / "reuse")),
-        compositor=fake,
+        result.version.experiment["parameters"],
+        registry=_registry(_installation(tmp_path / "reuse")),
+        composer=fake,
     )
-    assert para_musicxml(redone.versao.ir) == para_musicxml(result.versao.ir)
+    assert redone.version is not None and to_musicxml(redone.version.ir) == to_musicxml(result.version.ir)
     assert len(fake.calls) == 1
 
 
 def test_fewer_measures_returned_produces_warning(tmp_path):
     fake = FakeComposer()
-    fake.gerar = lambda condicao, compassos, semente: FakeComposer().gerar(condicao, 1, semente)
+    orig_generate = fake.generate
+    fake.generate = lambda condition, measures, seed: orig_generate(condition, 1, seed)  # type: ignore[method-assign]
     _, result = _generate(tmp_path, fake)
-    assert "1 de 2 compassos" in result.resumo
+    assert "1 of 2 measures" in result.summary
 
 
 def test_duo_request_with_solo_output_adapts_before_contemporary_layer(tmp_path):
-    from muschat.reasoning import responder
-    from tests.test_reasoning import ANALISE_OK, FakeChat, FakeRetriever
-
     comp, previous = _generate(tmp_path / "base", FakeComposer())
 
     class SoloComposer:
-        def gerar(self, condition, measures, seed):
-            root = ET.fromstring(FakeComposer().gerar(condition, measures, seed))
-            root.remove(root.find("part"))
+        def generate(self, condition, measures, seed):
+            root = ET.fromstring(FakeComposer().generate(condition, measures, seed))
+            part = root.find("part")
+            assert part is not None
+            root.remove(part)
             part_list = root.find("part-list")
-            part_list.remove(part_list.find("score-part"))
-            part_list.find("score-part/part-name").text = "Violoncello"
+            assert part_list is not None
+            sp = part_list.find("score-part")
+            assert sp is not None
+            part_list.remove(sp)
+            pname = part_list.find("score-part/part-name")
+            assert pname is not None
+            pname.text = "Violoncello"
             return ET.tostring(root)
 
-    plan = _plano("gerar_notagen", parametros={"compassos": 8}, instrumentos=["flauta", "violoncelo"])
-    plan["operacoes"][0]["condicao"] = CONDITIONS[0]
-    plan["operacoes"].append({"procedimento": "rarefazer"})
-    chat = FakeChat([])
-    response = responder(
-        "crie oito compassos para flauta e cello",
-        composicao=comp,
-        gerador=GeradorFake({**ANALISE_OK, "notacao": "compor"}, plan),
+    plan = _plan("generate_notagen", parameters={"measures": 8}, instruments=["flute", "cello"])
+    plan["operations"][0]["condition"] = CONDITIONS[0]
+    plan["operations"].append({"procedure": "rarefy"})
+    chat = LogChat([])
+    response = respond(
+        "create eight measures for flute and cello",
+        composition=comp,
+        generator=FakeGenerator({**ANALYSIS_OK, "notation": "compose"}, plan),
         chat=chat,
-        retriever=FakeRetriever([]),
-        modelo="m",
-        modo="notagen",
-        registro=_registry(_installation(tmp_path / "duo")),
-        compositor=SoloComposer(),
+        retriever=LogRet([]),
+        model="m",
+        mode="notagen",
+        registry=_registry(_installation(tmp_path / "duo")),
+        composer=SoloComposer(),
     )
-    assert comp.versoes[0] is previous.versao and len(comp.versoes) == 2
-    assert response.partituras and chat.mensagens
-    assert [p.instrumento for p in comp.atual.ir.partes] == ["Flauta", "Violoncelo"]
-    assert len(comp.atual.ir.compassos) == 8
-    assert "orquestração adaptada de 1 para 2 partes" in chat.mensagens[0].config.system_instruction
+    assert comp.versions[0] is previous.version and len(comp.versions) == 2
+    assert response.scores and chat.messages and comp.current is not None
+    assert [p.instrument for p in comp.current.ir.parts] == ["Flute", "Cello"]
+    assert len(comp.current.ir.measures) == 8
+    assert "orchestration adapted from 1 to 2 parts" in chat.messages[0].config.system_instruction
 
 
 def test_subprocess_failure_becomes_message_instead_of_raw_exception(tmp_path):
@@ -298,56 +289,52 @@ def test_subprocess_failure_becomes_message_instead_of_raw_exception(tmp_path):
 
 def test_two_section_form_and_section_edit_preserves_first_section(tmp_path):
     class WithTempo(FakeComposer):
-        def gerar(self, *args):
-            return super().gerar(*args).replace(
+        def generate(self, *args):
+            return super().generate(*args).replace(
                 b"</attributes>", b'</attributes><direction><sound tempo="120"/></direction>'
             )
 
     fake = WithTempo()
     reg = _registry(_installation(tmp_path))
-    plan = _plano("gerar_notagen", instrumentos=["violino", "violoncelo"])
-    plan["secoes"] = [
-        dict(nome=n, carater="calmo", material="notas", tecnicas=[], compasso_inicial=i, compasso_final=i + 1)
+    plan = _plan("generate_notagen", instruments=["violin", "cello"])
+    plan["sections"] = [
+        dict(name=n, character="calm", material="notes", techniques=[], start_measure=i, end_measure=i + 1)
         for n, i in [("A", 1), ("B", 3)]
     ]
-    plan["operacoes"] = [
+    plan["operations"] = [
         op
         for n in ["A", "B"]
         for op in [
-            dict(procedimento="gerar_notagen", condicao=CONDITIONS[0], secao=n),
-            dict(procedimento="transpor", secao=n, parametros=[dict(nome="intervalo", valor=50)]),
+            dict(procedure="generate_notagen", condition=CONDITIONS[0], section=n),
+            dict(procedure="transpose", section=n, parameters=[dict(name="interval", value=50)]),
         ]
     ]
-    comp = Composicao()
+    comp = Composition()
 
     def run_plan(p):
-        return compor(
-            "edit B", comp, gerador=GeradorFake(p), chat=ChatFake(), modelo="m", registro=reg, compositor=fake
-        )
+        return compose("edit B", comp, generator=FakeGenerator(p), chat=FakeChat(), model="m", registry=reg, composer=fake)
 
     huge = {
         **plan,
-        "secoes": [
-            dict(nome="A", carater="calmo", material="notas", compasso_inicial=1, compasso_final=1000000)
-        ],
-        "operacoes": plan["operacoes"][:2],
+        "sections": [dict(name="A", character="calm", material="notes", start_measure=1, end_measure=1000000)],
+        "operations": plan["operations"][:2],
     }
-    assert run_plan(huge).versao is None
-    incomplete = {**plan, "operacoes": plan["operacoes"][:2]}
-    assert run_plan(incomplete).versao is None
+    assert run_plan(huge).version is None
+    incomplete = {**plan, "operations": plan["operations"][:2]}
+    assert run_plan(incomplete).version is None
     assert fake.calls == []
     result = run_plan(plan)
-    assert result.versao is not None, result.resumo
+    assert result.version is not None, result.summary
     assert [v[1] for v in fake.calls] == [2, 2]
-    before = result.versao.ir
-    edit = _plano("transpor", parametros={"intervalo": 100})
-    edit["operacoes"][0]["secao"] = "B"
+    before = result.version.ir
+    edit = _plan("transpose", parameters={"interval": 100})
+    edit["operations"][0]["section"] = "B"
     result = run_plan(edit)
-    assert result.versao is not None, result.resumo
-    assert result.versao.experimento["plano"]["secoes"] == plan["secoes"]
-    for pa, pn in zip(before.partes, result.versao.ir.partes):
-        assert pa.vozes[0].eventos[:2] == pn.vozes[0].eventos[:2]
-        assert pn.vozes[0].eventos[2].alturas[0].midicents == pa.vozes[0].eventos[2].alturas[0].midicents + 100
-    edit["operacoes"][0]["secao"] = "missing"
-    assert run_plan(edit).versao is None
-    assert len(comp.versoes) == 2
+    assert result.version is not None, result.summary
+    assert result.version.experiment["plan"]["sections"] == plan["sections"]
+    for pa, pn in zip(before.parts, result.version.ir.parts):
+        assert pa.voices[0].events[:2] == pn.voices[0].events[:2]
+        assert pn.voices[0].events[2].pitches[0].midicents == pa.voices[0].events[2].pitches[0].midicents + 100
+    edit["operations"][0]["section"] = "missing"
+    assert run_plan(edit).version is None
+    assert len(comp.versions) == 2

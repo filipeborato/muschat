@@ -7,11 +7,11 @@ from fractions import Fraction as F
 import pytest
 
 from muschat.constraints import Constraint, check_constraints
-from muschat.notacao.musicxml import para_musicxml
+from muschat.notation.musicxml import to_musicxml
 from muschat.plan import Plan, Selection
 from muschat.procedures import CATALOG
 from muschat.procedures.common import unplayable_techniques
-from muschat.score_ir import Note, Rest, gestures, locate, to_legacy_musicir
+from muschat.score_ir import Note, Rest, gestures, locate
 
 
 def _run(name: str, ir=None, selection=None, seed=1, instruments=None, **params):
@@ -26,7 +26,7 @@ def _run(name: str, ir=None, selection=None, seed=1, instruments=None, **params)
     )
     assert proc.fn is not None
     updated = proc.fn(ir, plan, complete, random.Random(seed))
-    para_musicxml(to_legacy_musicir(updated))
+    to_musicxml(updated)
     return updated
 
 
@@ -342,7 +342,7 @@ def _by_gesture(ir, techniques, selection=None, seed=1, **params):
     fn = CATALOG["gestural_techniques"].fn
     assert fn is not None
     updated = fn(ir, plan, complete, random.Random(seed))
-    return updated, para_musicxml(to_legacy_musicir(updated))
+    return updated, to_musicxml(updated)
 
 
 def test_gestural_techniques_apply_to_entire_gesture_and_only_where_playable(quartet):

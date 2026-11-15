@@ -21,14 +21,6 @@ class NotaGenInstallation:
     directory: str
     conditions: tuple[str, ...]
 
-    @property
-    def pasta(self) -> str:
-        return self.directory
-
-    @property
-    def condicoes(self) -> tuple[str, ...]:
-        return self.conditions
-
 
 def detect_notagen(python: str | None, directory: str | None) -> NotaGenInstallation | str:
     """Return `NotaGenInstallation` when Python, weights, and `prompts.txt` are ready, or a reason string otherwise."""
@@ -86,16 +78,3 @@ class LocalNotaGen:
             if not output_file.is_file() or output_file.stat().st_size == 0:
                 raise ValueError("NotaGen did not produce a MusicXML output file")
             return output_file.read_bytes()
-
-    def gerar(self, condicao: str, compassos: int, semente: int) -> bytes:
-        return self.generate(condicao, compassos, semente)
-
-
-# shortcut: temporary compatibility aliases for unmigrated callers; remove in Ticket 03
-PESOS = WEIGHTS_FILE
-SCRIPT = SCRIPT_PATH
-PRAZO = TIMEOUT
-Compositor = ComposerBackend
-InstalacaoNotaGen = NotaGenInstallation
-detectar_notagen = detect_notagen
-NotaGenLocal = LocalNotaGen

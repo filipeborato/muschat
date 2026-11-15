@@ -22,11 +22,6 @@ class Config:
     openmusic_enabled: bool = False
     notagen: tuple[str, str] | None = None  # (NotaGen python executable, repo directory); None = disabled
 
-    # shortcut: legacy Portuguese attribute alias; remove in Phase 0 Contract (Ticket 03)
-    @property
-    def openmusic_ativo(self) -> bool:
-        return self.openmusic_enabled
-
 
 def _read(name: str, env: Mapping, secrets: Mapping) -> str:
     return str(env.get(name) or secrets.get(name) or "").strip()
@@ -48,12 +43,3 @@ def load_config(env: Mapping, secrets: Mapping) -> Config:
         if _read("MUSCHAT_NOTAGEN", env, secrets) == "1"
         else None,
     )
-
-
-# shortcut: legacy aliases for unmigrated callers; remove in Phase 0 Contract (Ticket 03)
-MODELO_PADRAO = DEFAULT_MODEL
-MODELO_EMBEDDINGS_PADRAO = DEFAULT_EMBED_MODEL
-NOTAGEN_PYTHON_PADRAO = DEFAULT_NOTAGEN_PYTHON
-NOTAGEN_DIR_PADRAO = DEFAULT_NOTAGEN_DIR
-ChaveAusente = MissingApiKeyError
-carregar_config = load_config

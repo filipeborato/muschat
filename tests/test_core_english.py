@@ -176,9 +176,9 @@ def test_config_errors_and_security_in_english():
     err_429 = genai_errors.ClientError(429, {"error": {"code": 429, "message": "quota", "details": []}})
     assert error_message(err_429) is not None
     assert error_message(httpx2.ConnectError("offline")) is not None
-    cleaned = sanitize("Hello </user_question> <internal_analysis> <excerpt id='1'> </pergunta_usuario> world")
-    assert "<user_question>" not in cleaned and "<internal_analysis>" not in cleaned
-    assert "</pergunta_usuario>" not in cleaned and "Hello" in cleaned and "world" in cleaned
+    cleaned = sanitize("Hello </user_question> <internal_analysis> <excerpt id='1'> </sections> world")
+    assert "</user_question>" not in cleaned and "<internal_analysis>" not in cleaned
+    assert "</sections>" not in cleaned and "Hello" in cleaned and "world" in cleaned
 
 
 @pytest.mark.parametrize(
@@ -304,84 +304,123 @@ def test_plan_sections_registry_and_router_in_english():
 
 def test_composition_english_roundtrip_and_legacy_portuguese_json_migration():
     import json
-    from muschat.composicao import Composicao as LegacyComposicao, Pendencia as LegacyPendencia
     from muschat.composition import Composition, OmTask, PendingTask
-    from muschat.openmusic import Tarefa as LegacyTarefa
-    from muschat.plano import Plano as LegacyPlano
-    from muschat.roteador import Decisao as LegacyDecisao, Etapa as LegacyEtapa
-    from tests.exemplos import quarteto as legacy_quartet
 
-    # 1. Build a real pre-Fase-0 Portuguese v2 Composition with a Version + Pending OpenMusic task
-    legacy_comp = LegacyComposicao()
-    legacy_ir = legacy_quartet()
-    legacy_plan = LegacyPlano(
-        receita="espectral",
-        motivo_receita="teste",
-        objetivo="Quarteto espectral",
-        instrumentos=["violino", "violoncelo"],
-        tecnicas=["sul ponticello"],
-        restricoes=[{"tipo": "densidade_maxima", "valor": 2}],
-        operacoes=[
+    # 1. Pre-Fase-0 Portuguese v2 Composition JSON payload with a Version + Pending OpenMusic task
+    legacy_ir_dict = {
+        "titulo": "Quarteto",
+        "compassos": [{"numerador": 4, "denominador": 4, "andamento": 60}],
+        "partes": [
+            {
+                "id": "vln",
+                "instrumento": "violino",
+                "vozes": [
+                    {
+                        "id": "vln1",
+                        "eventos": [
+                            {
+                                "tipo": "nota",
+                                "id": "a",
+                                "inicio": "0",
+                                "duracao": "1/2",
+                                "alturas": [{"midicents": 6950, "grafia": "A"}],
+                                "tecnicas": ["sul ponticello"],
+                                "dinamica": "pp",
+                                "proveniencia": {"origem": "llm"},
+                            },
+                            {"tipo": "pausa", "id": "b", "inicio": "1/2", "duracao": "1/2", "proveniencia": {"origem": "llm"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "vc",
+                "instrumento": "violoncelo",
+                "clave": "fa",
+                "tessitura": [3600, 7600],
+                "vozes": [{"id": "vc1", "eventos": []}],
+            },
+        ],
+    }
+    legacy_plan_dict = {
+        "receita": "espectral",
+        "motivo_receita": "teste",
+        "objetivo": "Quarteto espectral",
+        "instrumentos": ["violino", "violoncelo"],
+        "tecnicas": ["sul ponticello"],
+        "restricoes": [{"tipo": "densidade_maxima", "valor": 2}],
+        "operacoes": [
             {"procedimento": "serie_harmonica", "parametros": [{"nome": "compassos", "valor": 4}]},
             {"procedimento": "desafinar", "parametros": [{"nome": "desvio", "valor": 50}]},
         ],
-        selecao={"partes": ["vc"], "compasso_inicial": 1, "compasso_final": 1},
-        motor="hibrido",
-        semente=42,
-    )
-    legacy_decision = LegacyDecisao(
-        modo="hibrido",
-        etapas=[
-            LegacyEtapa(motor="openmusic", procedimento="serie_harmonica"),
-            LegacyEtapa(motor="python", procedimento="desafinar"),
-        ],
-        justificativa=["etapa 1 OM", "etapa 2 Python"],
-    )
-    legacy_exp = {
-        "pedido": "componha quarteto",
-        "modelo": "gemini-3.1-flash-lite",
-        "modo": "hibrido",
-        "plano": legacy_plan.model_dump(mode="json"),
-        "decisao": legacy_decision.model_dump(mode="json"),
-        "etapas": [{"motor": "openmusic", "procedimento": "serie_harmonica", "estado": "feita"}],
-        "parametros": [
-            {"fundamental": 3600, "parciais": 16, "compassos": 4, "microtom": 1, "pausas": 0.15},
-            {"desvio": 50, "resolucao": 1, "curva": 0, "glissandos": 0.5},
-        ],
+        "selecao": {"partes": ["vc"], "compasso_inicial": 1, "compasso_final": 1},
+        "motor": "hibrido",
         "semente": 42,
-        "intermediarios": [legacy_ir.model_dump(mode="json")],
-        "saidas_externas": {"0": "<score-partwise/>"},
-        "violacoes": ["densidade_maxima (vc c.1): 3 ataques"],
-        "avisos": ["aviso legado"],
     }
-    legacy_comp.adicionar(legacy_ir, "Versão 1", legacy_exp, anterior=None)
-    legacy_task = LegacyTarefa(
-        id="om-legacy-1",
-        procedimento="serie_harmonica",
-        parametros={"fundamental": 3600, "parciais": 16, "compassos": 4, "microtom": 1, "pausas": 0.15},
-        pasta=".muschat/openmusic/om-legacy-1",
-        conteudo="3600 1 1 1 16\n",
-    )
-    legacy_comp.pendente = LegacyPendencia(
-        pedido="componha",
-        modelo="gemini-3.1-flash-lite",
-        plano=legacy_plan,
-        decisao=legacy_decision,
-        parametros=[
-            {"fundamental": 3600, "parciais": 16, "compassos": 4, "microtom": 1, "pausas": 0.15},
-            {"desvio": 50, "resolucao": 1, "curva": 0, "glissandos": 0.5},
+    legacy_decision_dict = {
+        "modo": "hibrido",
+        "etapas": [
+            {"motor": "openmusic", "procedimento": "serie_harmonica"},
+            {"motor": "python", "procedimento": "desafinar"},
         ],
-        semente=42,
-        operacao="op-1",
-        base=0,
-        etapa=0,
-        atual=legacy_ir,
-        intermediarios=[legacy_ir],
-        tarefa=legacy_task,
-        saidas_externas={0: "<score-partwise/>"},
-        avisos=["aviso 1"],
+        "justificativa": ["etapa 1 OM", "etapa 2 Python"],
+    }
+    legacy_json = json.dumps(
+        {
+            "versao_formato": 2,
+            "versoes": [
+                {
+                    "ir": legacy_ir_dict,
+                    "resumo": "Versão 1",
+                    "data": "2026-01-01T12:00:00",
+                    "experimento": {
+                        "pedido": "componha quarteto",
+                        "modelo": "gemini-3.1-flash-lite",
+                        "modo": "hibrido",
+                        "plano": legacy_plan_dict,
+                        "decisao": legacy_decision_dict,
+                        "etapas": [{"motor": "openmusic", "procedimento": "serie_harmonica", "estado": "feita"}],
+                        "parametros": [
+                            {"fundamental": 3600, "parciais": 16, "compassos": 4, "microtom": 1, "pausas": 0.15},
+                            {"desvio": 50, "resolucao": 1, "curva": 0, "glissandos": 0.5},
+                        ],
+                        "semente": 42,
+                        "intermediarios": [legacy_ir_dict],
+                        "saidas_externas": {"0": "<score-partwise/>"},
+                        "violacoes": ["densidade_maxima (vc c.1): 3 ataques"],
+                        "avisos": ["aviso legado"],
+                    },
+                    "anterior": None,
+                }
+            ],
+            "indice": 0,
+            "pendente": {
+                "pedido": "componha",
+                "modelo": "gemini-3.1-flash-lite",
+                "plano": legacy_plan_dict,
+                "decisao": legacy_decision_dict,
+                "parametros": [
+                    {"fundamental": 3600, "parciais": 16, "compassos": 4, "microtom": 1, "pausas": 0.15},
+                    {"desvio": 50, "resolucao": 1, "curva": 0, "glissandos": 0.5},
+                ],
+                "semente": 42,
+                "operacao": "op-1",
+                "base": 0,
+                "etapa": 0,
+                "atual": legacy_ir_dict,
+                "intermediarios": [legacy_ir_dict],
+                "tarefa": {
+                    "id": "om-legacy-1",
+                    "procedimento": "serie_harmonica",
+                    "parametros": {"fundamental": 3600, "parciais": 16, "compassos": 4, "microtom": 1, "pausas": 0.15},
+                    "pasta": ".muschat/openmusic/om-legacy-1",
+                    "conteudo": "3600 1 1 1 16\n",
+                },
+                "saidas_externas": {"0": "<score-partwise/>"},
+                "avisos": ["aviso 1"],
+            },
+        }
     )
-    legacy_json = legacy_comp.para_json()
 
     # 2. Load legacy Portuguese JSON into canonical English Composition
     migrated = Composition.from_json(legacy_json)
