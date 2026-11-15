@@ -38,8 +38,10 @@ def _orquestrar(reservatorio: list[ir.Altura], plano: Plano, p: dict[str, float]
     for k, nome in enumerate(plano.instrumentos or QUARTETO, 1):
         inst = instrumento(nome)
         clave, tessitura = inst.clave, inst.tessitura
-        registradas = {no_registro(a.midicents, tessitura): a.grafia for a in reservatorio}
+        registradas: dict[int, ir.Letra | None] = {
+            no_registro(a.midicents, inst.registro_inicial or tessitura): a.grafia for a in reservatorio}
         alturas = [ir.Altura(midicents=a, grafia=registradas[a]) for a in sorted(registradas)]
+        anterior: ir.Altura | None = None
         eventos: list[ir.Evento] = []
         inicio = Fraction(0)
         for _ in range(int(p["compassos"])):
@@ -50,8 +52,11 @@ def _orquestrar(reservatorio: list[ir.Altura], plano: Plano, p: dict[str, float]
                 if rng.random() < p["pausas"]:
                     eventos.append(ir.Pausa(id=eid, inicio=inicio, duracao=duracao, proveniencia=prov))
                 else:
+                    # shortcut: salto padrão de uma oitava; parametrizar quando o compositor pedir outro limite.
+                    proximas = [a for a in alturas if anterior is None or abs(a.midicents - anterior.midicents) <= 1200]
+                    anterior = rng.choice(proximas)
                     eventos.append(ir.Nota(id=eid, inicio=inicio, duracao=duracao, proveniencia=prov,
-                                           alturas=[rng.choice(alturas)]))
+                                           alturas=[anterior]))
                 inicio, resta = inicio + duracao, resta - duracao
         partes.append(ir.Parte(id=f"P{k}", instrumento=nome.strip().capitalize(), clave=clave,
                                tessitura=tessitura, vozes=[ir.Voz(id=f"P{k}V1", eventos=eventos)]))

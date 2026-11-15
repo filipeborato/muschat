@@ -23,6 +23,7 @@ class Instrumento:
     tessitura: tuple[int, int]
     transposicao: tuple[int, int, int] = (0, 0, 0)  # diatônica, cromática, oitavas: escrito -> real
     clave_escrita: Clave | None = None
+    registro_inicial: tuple[int, int] | None = None  # preferência da geração; não limita transformações explícitas
 
     @property
     def altura_definida(self) -> bool:
@@ -37,7 +38,7 @@ INSTRUMENTOS: dict[str, Instrumento] = {
     # cordas friccionadas
     "violino": Instrumento("cordas", "sol", (5500, 10300)),
     "viola": Instrumento("cordas", "do3", (4800, 9100)),
-    "violoncelo": Instrumento("cordas", "fa", (3600, 8100)),
+    "violoncelo": Instrumento("cordas", "fa", (3600, 8100), registro_inicial=(3600, 6000)),
     "contrabaixo": Instrumento("cordas", "fa", (2800, 6700), (0, 0, -1)),
     # madeiras
     "piccolo": Instrumento("madeiras", "sol", (7400, 10800), (0, 0, 1)),

@@ -74,6 +74,29 @@ def test_mesma_semente_mesma_musicir():
     assert a == b
 
 
+@pytest.mark.parametrize("semente", [1, 7, 42])
+def test_geracao_e_orquestracao_usam_registro_grave_do_cello_sem_saltos_enormes(semente):
+    c = Composicao()
+    for procedimento in ("serie_harmonica", "orquestrar_material"):
+        r = _compor(c, _plano(procedimento, parametros={"compassos": 16, "pausas": 0}, semente=semente))
+        assert r.versao is not None, r.resumo
+        for parte in r.versao.ir.partes:
+            linha = [e.alturas[0].midicents for e in parte.vozes[0].eventos if isinstance(e, Nota)]
+            assert all(abs(b - a) <= 1200 for a, b in zip(linha, linha[1:]))
+            if parte.instrumento == "Violoncelo":
+                assert linha and all(3600 <= a <= 6000 for a in linha)
+                assert parte.tessitura == (3600, 8100)
+
+
+def test_registro_inicial_nao_impede_transposicao_explicita_do_cello():
+    c = _quarteto()
+    r = _compor(c, _plano("transpor", parametros={"intervalo": 1200}, selecao={"partes": ["P4"]}))
+    assert r.versao is not None, r.resumo
+    antes = [e.alturas[0].midicents for e in c.versoes[0].ir.partes[3].vozes[0].eventos if isinstance(e, Nota)]
+    depois = [e.alturas[0].midicents for e in r.versao.ir.partes[3].vozes[0].eventos if isinstance(e, Nota)]
+    assert depois == [a + 1200 for a in antes]
+
+
 @pytest.mark.parametrize("plano", [
     _plano(procedimento="executar_lisp"),
     _plano(parametros={"compassos": 999}),
