@@ -72,7 +72,7 @@ def test_planejamento_respeita_motor_selecionado_e_prepara_tarefa(tmp_path):
     sistema = g.chamadas[0].config.system_instruction
     assert "Motor selecionado na interface: openmusic" in sistema
     assert "- serie_harmonica:" in sistema
-    assert "- tecnicas_por_gesto:" not in sistema and "- densidade:" not in sistema
+    assert "- tecnicas_por_gesto:" in sistema and "- densidade:" in sistema
     assert r.tarefa is not None and c.pendente is not None
     assert not c.versoes
 
@@ -87,7 +87,7 @@ def test_pedido_que_escolhe_o_motor_vale_como_escolha_manual():
     ("automatico", COM_OM, ["serie_harmonica"], ["python"]),
     ("python", COM_OM, ["serie_harmonica", "densidade"], ["python", "python"]),
     ("openmusic", COM_OM, ["serie_harmonica"], ["openmusic"]),
-    ("openmusic", COM_OM, ["serie_harmonica", "densidade"], None),  # densidade não existe no OpenMusic
+    ("openmusic", COM_OM, ["serie_harmonica", "densidade"], ["openmusic", "python"]),
     ("hibrido", COM_OM, ["serie_harmonica", "orquestrar_material"], ["openmusic", "python"]),
     ("hibrido", SEM_OM, ["serie_harmonica", "orquestrar_material"], None),
     ("hibrido", COM_OM, ["transpor"], None),  # nenhuma etapa possível no OpenMusic
@@ -102,7 +102,7 @@ def test_experimento_d_decisao_e_justificativa_registradas(modo, registro, opera
         return
     decisao = rotear(plano, modo, registro)
     assert [e.motor for e in decisao.etapas] == esperado
-    assert len(decisao.justificativa) == len(operacoes) and all(decisao.justificativa)
+    assert len(decisao.justificativa) >= len(operacoes) and all(decisao.justificativa)
 
 
 def test_registro_detecta_bibliotecas_e_dependencias_externas(tmp_path, monkeypatch):
@@ -157,7 +157,7 @@ def test_etapa_openmusic_cria_tarefa_e_aguarda_o_compositor(tmp_path):
 
 
 def test_saida_valida_vira_versao_com_proveniencia_openmusic(tmp_path):
-    c, r, _ = _om(tmp_path)
+    c, r, _ = _om(tmp_path, _plano(instrumentos=[]))
     r2 = retomar(c, SAIDA_16)
     assert r2.versao is not None and c.pendente is None
     eventos = [e for _, _, e in r2.versao.ir.eventos()]
@@ -165,6 +165,36 @@ def test_saida_valida_vira_versao_com_proveniencia_openmusic(tmp_path):
     assert {e.proveniencia.autor for e in eventos} == {"OpenMusic/Esquisse"}
     alturas = [a.midicents for e in eventos if hasattr(e, "alturas") for a in e.alturas]
     assert alturas[:3] == [3600, 4800, 5500]  # 5502 aproximado ao quarto de tom
+
+
+@pytest.mark.parametrize("modo", ["openmusic", "hibrido"])
+def test_duo_com_tecnicas_completa_apos_patch_em_ambos_modos(tmp_path, modo):
+    plano = _plano(parametros={"compassos": 8}, instrumentos=["flauta", "violoncelo"])
+    plano["tecnicas"] = ["frullato", "sul ponticello"]
+    plano["operacoes"].append({"procedimento": "tecnicas_por_gesto", "parametros": [{"nome": "proporcao", "valor": 1}]})
+    c, r, _ = _rodar(plano, modo=modo, registro=COM_OM, pasta=tmp_path)
+    assert r.tarefa and not c.versoes
+    fim = retomar(c, SAIDA_16)
+    assert fim.versao, fim.resumo
+    assert len(fim.versao.ir.compassos) == 8
+    assert [p.instrumento for p in fim.versao.ir.partes] == ["Flauta", "Violoncelo"]
+    assert [e["motor"] for e in fim.versao.experimento["etapas"]] == ["openmusic", "python", "python"]
+
+
+def test_hibrido_replaneja_uma_vez_quando_modelo_omite_etapa_om(tmp_path):
+    ruim = _plano("aplicar_tecnicas", instrumentos=["flauta", "violoncelo"])
+    bom = _plano(parametros={"compassos": 8}, instrumentos=["flauta", "violoncelo"])
+    bom["tecnicas"] = ["frullato", "sul ponticello"]
+    g, c = GeradorFake(ruim, bom), Composicao()
+    r = compor("oito compassos para flauta e cello", c, gerador=g, chat=ChatFake(), modelo="m",
+               modo="hibrido", registro=COM_OM, pasta_tarefas=tmp_path)
+    assert r.tarefa and len(g.chamadas) == 2
+    assert "CORREÇÃO" in g.chamadas[1].config.system_instruction
+    assert retomar(c, SAIDA_16).versao
+    g, c = GeradorFake(ruim, ruim), Composicao()
+    r = compor("componha", c, gerador=g, chat=ChatFake(), modelo="m", modo="hibrido", registro=COM_OM)
+    assert not r.tarefa and not r.versao and not c.pendente
+    assert "após correção" in r.resumo and len(g.chamadas) == 2
 
 
 def test_chat_importa_saida_pendente_sem_reinterpretar_como_hz(tmp_path):

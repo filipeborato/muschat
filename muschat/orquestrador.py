@@ -174,7 +174,7 @@ def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: 
         except ValueError as exc:
             raise Recusa(str(exc)) from exc
         efetivo = plano.motor if modo == "automatico" else modo
-        if (efetivo == "hibrido" and plano.instrumentos
+        if (efetivo in ("hibrido", "openmusic") and plano.instrumentos
                 and any(o.procedimento == "serie_harmonica" for o in plano.operacoes)):
             operacoes = []
             for k, op in enumerate(plano.operacoes):
@@ -293,7 +293,7 @@ def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dic
               + "".join(f"; hipótese: {neutralizar(h)}" for h in plano.hipoteses)
               + (f"; restrições violadas ({len(violacoes)}): {'; '.join(violacoes[:5])}" if violacoes
                  else "; restrições cumpridas")
-              + (f"; descartado na leitura: {'; '.join(ctx.avisos)}" if ctx.avisos else "")
+              + (f"; avisos: {'; '.join(ctx.avisos)}" if ctx.avisos else "")
               + f". Escolha do motor: {' '.join(ctx.decisao.justificativa)}")
     versao = composicao.adicionar(nova, resumo, {
         "pedido": ctx.pedido, "modelo": ctx.modelo, "modo": ctx.decisao.modo, "plano": plano.model_dump(mode="json"),
@@ -360,7 +360,7 @@ def _validar_condicoes(plano: Plano, etapas: list[Etapa], registro: Registro) ->
 
 def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
                    compositor: Compositor | None) -> tuple[MusicIR, Pendencia]:
-    """Lê a saída do NotaGen e exige a quantidade de partes solicitada antes de transformar ou gravar."""
+    """Lê a saída do NotaGen e adapta a formação solicitada antes da camada contemporânea."""
     op = ctx.plano.operacoes[k]
     alvo = ctx.plano.para_etapa(k)
     pedidos = int(ctx.parametros[k]["compassos"])
@@ -379,23 +379,25 @@ def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
         raise Recusa(f"etapa {k + 1} ({op.procedimento}): saída ilegível: {_primeira_linha(exc)}") from exc
     if len(ir.compassos) < pedidos:  # a peça do modelo acabou antes
         avisos.append(f"o NotaGen escreveu {len(ir.compassos)} de {pedidos} compassos")
+    adaptada = False
     if len(ctx.plano.instrumentos) == len(ir.partes):
         ir = ir.model_copy(update={"partes": [_com_instrumento(p, nome)
                                               for p, nome in zip(ir.partes, ctx.plano.instrumentos)]})
     elif ctx.plano.instrumentos:
-        recebidos = ", ".join(p.instrumento for p in ir.partes)
-        solicitados = ", ".join(ctx.plano.instrumentos)
-        raise Recusa(f"instrumentação incompatível: o NotaGen escreveu {len(ir.partes)} partes ({recebidos}) "
-                     f"para {len(ctx.plano.instrumentos)} instrumentos pedidos ({solicitados}). "
-                     "A saída não atende ao conjunto solicitado; nenhuma versão foi gravada. "
-                     "Gere novamente com uma condição compatível ou use Python/Abjad para o conjunto exato.")
+        from muschat.orquestracao import adaptar
+        try:
+            ir, aviso = adaptar(ir, ctx.plano.instrumentos)
+        except ValueError as exc:
+            raise Recusa(str(exc)) from exc
+        avisos.append(aviso)
+        adaptada = True
     if op.secao:
         from muschat.secoes import inserir
         try:
             ir, atual = inserir(atual, ir, alvo.selecao, ctx.plano.secoes)
         except ValueError as exc:
             raise Recusa(str(exc)) from exc
-    nova = _conferir(alvo, atual, ir, origem="externo", operacao=ctx.operacao)
+    nova = _conferir(alvo, atual, ir, origem="algoritmo" if adaptada else "externo", operacao=ctx.operacao)
     return nova, ctx.model_copy(update={"saidas_externas": {**ctx.saidas_externas, k: xml},
                                         "avisos": [*ctx.avisos, *(neutralizar(a) for a in avisos)]})
 
@@ -440,7 +442,7 @@ def _primeira_linha(exc: Exception) -> str:
 
 def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "SessaoChat", modelo: str,
               catalogo: dict[str, Procedimento], registro: Registro, modo: Modo = "automatico",
-              secoes: list | None = None) -> Plano:
+              secoes: list | None = None, corrigindo_rota: bool = False) -> Plano:
     texto = (f"<pergunta_usuario>\n{neutralizar(pedido)}\n</pergunta_usuario>\n"
              f"<secoes>{neutralizar(str(secoes or []))}</secoes>\n"
              f"<composicao_atual>\n{resumir(atual)}\n</composicao_atual>")
@@ -450,7 +452,7 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         config=types.GenerateContentConfig(
             system_instruction=prompts.PLANO.format(
                 catalogo=_catalogo_no_prompt(catalogo, registro, modo) + (
-                    "\n" + receitas_no_prompt() if modo != "openmusic" else ""),
+                    "\n" + receitas_no_prompt()),
                 instrumentos="; ".join(f"{f}: {', '.join(n for n, i in INSTRUMENTOS.items() if i.familia == f)}"
                                        for f in FAMILIAS),
                 tecnicas="; ".join(f"{f}: {', '.join(tecnicas_da_familia(f))}" for f in FAMILIAS),
@@ -461,7 +463,14 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
                  "Não invente operações para atender partes do pedido sem suporte.") + (
                  " Comece obrigatoriamente por gerar_notagen com uma condicao disponível, seguido das "
                  "transformações Python solicitadas; não substitua por serie_harmonica."
-                 if modo == "notagen" else ""),
+                 if modo == "notagen" else "") + (
+                 " OpenMusic/Híbrido exige pelo menos uma operação com patch OpenMusic disponível no catálogo. "
+                 "Para uma composição nova, use esse material na orquestração dos instrumentos pedidos e "
+                 "depois aplique técnicas em Python. Não envie apenas transformações Python."
+                 if modo in ("openmusic", "hibrido") else "") + (
+                 " CORREÇÃO: o plano anterior omitiu a etapa OpenMusic. Refaça a cadeia inteira com um patch "
+                 "aprovado disponível, sem perder a instrumentação, quantidade de compassos e técnicas do pedido."
+                 if corrigindo_rota else ""),
             temperature=0.2,
             response_mime_type="application/json",
             response_schema=Plano,
@@ -471,6 +480,18 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         plano = Plano.model_validate_json(resposta.text or "")
         if secoes:
             plano = Plano.model_validate({**plano.model_dump(), "secoes": secoes})
+        efetivo = plano.motor if modo == "automatico" else modo
+        if efetivo in ("openmusic", "hibrido"):
+            aprovados = {nome for nome in registro.disponiveis() if nome in catalogo
+                         and (cap := registro.implementacoes(nome).get("openmusic"))
+                         and cap.estado != "indisponivel"}
+            if aprovados and not any(op.procedimento in aprovados for op in plano.operacoes):
+                if corrigindo_rota:
+                    raise Recusa("o planejamento não incluiu uma etapa OpenMusic mesmo após correção; "
+                                 "nenhum motor foi executado")
+                corrigido = _planejar(pedido, atual, gerador=gerador, chat=chat, modelo=modelo, catalogo=catalogo,
+                                      registro=registro, modo=efetivo, secoes=secoes, corrigindo_rota=True)
+                return corrigido.model_copy(update={"motor": efetivo})
         return plano
     except ValidationError as exc:
         campos = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}"
@@ -542,7 +563,10 @@ def _catalogo_no_prompt(catalogo: dict[str, Procedimento], registro: Registro, m
         if modo == "notagen" and not any(m in motores and motores[m].estado != "indisponivel"
                                          for m in ("notagen", "python")):
             continue
-        if modo in ("python", "openmusic") and (modo not in motores or motores[modo].estado == "indisponivel"):
+        if modo == "python" and (modo not in motores or motores[modo].estado == "indisponivel"):
+            continue
+        if modo == "openmusic" and not any(m in motores and motores[m].estado != "indisponivel"
+                                          for m in ("openmusic", "python")):
             continue
         onde = " Também no OpenMusic (assistido: o compositor roda o patch)." if "openmusic" in motores else ""
         linhas.append(f"- {proc.nome}: {proc.descricao}{onde}")

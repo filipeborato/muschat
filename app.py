@@ -135,7 +135,8 @@ st.sidebar.radio("Motor", modos, format_func=MODOS.__getitem__, key="modo", hori
                  help="Automático escolhe por regras explícitas; os outros são respeitados ou recusados com o motivo.")
 if st.session_state.modo == "openmusic":
     st.sidebar.caption("OpenMusic assistido: o chat prepara uma tarefa para você executar o patch no OpenMusic "
-                       "e importar a saída. Para combinar com procedimentos Python, selecione Híbrido.")
+                       "e importar a saída. Orquestração e técnicas sem patch rodam depois em Python/Abjad; "
+                       "essa cadeia é registrada como Híbrido.")
 elif st.session_state.modo == "notagen":
     st.sidebar.caption("Este modo exige uma nova geração NotaGen seguida de transformações Python. "
                        "Para editar sem regenerar, use Automático ou Python/Abjad.")

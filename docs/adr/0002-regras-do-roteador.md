@@ -11,6 +11,12 @@ Atualização 2026-11-15: motor opcional **NotaGen** (`MUSCHAT_NOTAGEN=1`). Ele 
 
 ## Contexto
 
+Atualização de fluxo: selecionar OpenMusic e pedir uma cadeia que combine um patch aprovado com operações
+exclusivas do Python passa explicitamente a Híbrido, com justificativa registrada. O OpenMusic continua
+obrigatório e assistido; não se aceita execução inteiramente Python como se fosse OpenMusic. O planejador
+recebe o catálogo combinado e corrige uma vez um plano que omita todas as etapas OpenMusic disponíveis.
+Esta regra substitui a recusa de R3 apenas para essa cadeia mista.
+
 O compositor escolhe um modo (Automático, Python/Abjad, OpenMusic, Híbrido) e o plano lista operações do catálogo.
 A escolha do motor precisa ser descritível num trabalho acadêmico. Não pode haver pontuação de "qualidade" nem troca
 silenciosa de motor. O Registro de capacidades (`muschat/registro.py`) diz o que roda nesta máquina e em que estado:

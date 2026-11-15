@@ -3,8 +3,8 @@
 Regras explícitas e ordenadas (tabela em docs/adr/0002-regras-do-roteador.md); nenhuma pontuação de "qualidade".
   R1 adequação: só motores que declaram o procedimento.
   R2 disponibilidade: motor indisponível nesta máquina sai (o motivo vai para a justificativa).
-  R3 escolha manual: Python ou OpenMusic escolhido pelo compositor é respeitado; se não der, recusa com alternativas,
-     sem executar outro motor.
+  R3 escolha manual: Python permanece exclusivo; OpenMusic com operações Python vira cadeia Híbrida explícita,
+     mantendo uma etapa OpenMusic real. Sem rota disponível, recusa com alternativas.
   R4 híbrido: cada operação vai para o OpenMusic quando ele a executa aqui, o resto para o Python; sem nenhuma etapa
      OpenMusic possível, recusa.
   R5 automático: menos intervenção manual primeiro (automatico < intercambio_arquivos < manual), o que também é o
@@ -48,6 +48,12 @@ def rotear(plano: Plano, modo: Modo, registro: Registro) -> Decisao:
     elif plano.motor not in ("automatico", modo):
         porque.append(f"O pedido citou o motor {MODOS[plano.motor]}, mas o seletor está em {MODOS[modo]}: vale o "
                       "seletor (R3). Troque o seletor para usar o outro motor.")
+    if efetivo == "openmusic":
+        om = [registro.implementacoes(op.procedimento).get("openmusic") for op in plano.operacoes]
+        if any(c and c.estado != "indisponivel" for c in om) and any(c is None or c.estado == "indisponivel" for c in om):
+            efetivo = "hibrido"
+            porque.append("OpenMusic com camada Python: cadeia executada em modo Híbrido; "
+                          "os patches aprovados ficam no OpenMusic e as transformações restantes no Python/Abjad.")
     etapas, linhas = [], list(porque)
     for op in plano.operacoes:
         motor, linha = _escolher(op.procedimento, efetivo, registro)

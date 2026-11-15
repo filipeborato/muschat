@@ -171,11 +171,15 @@ def test_modo_manual_python_com_gerar_notagen_recusa_com_a_alternativa(tmp_path)
     assert r.versao is None and "NotaGen (automático)" in r.resumo and fake.chamadas == []
 
 
-def test_quantidade_de_partes_incompativel_recusa_sem_gravar(tmp_path):
+def test_quantidade_de_partes_diferente_e_adaptada_e_documentada(tmp_path):
     fake = CompositorFake()
     c, r = _gerar(tmp_path, fake, instrumentos=("flauta", "oboe", "fagote"))
-    assert r.versao is None and c.versoes == []
-    assert "2 partes (Violin, Cello)" in r.resumo and "3 instrumentos pedidos" in r.resumo
+    assert r.versao is not None and len(c.versoes) == 1
+    assert [p.instrumento for p in r.versao.ir.partes] == ["Flauta", "Oboe", "Fagote"]
+    assert "orquestração adaptada de 2 para 3 partes" in r.resumo
+    refeito = reaplicar(c, r.versao.experimento["parametros"], registro=_registro(_instalacao(tmp_path / "reuso")), compositor=fake)
+    assert para_musicxml(refeito.versao.ir) == para_musicxml(r.versao.ir)
+    assert len(fake.chamadas) == 1
 
 
 def test_compassos_a_menos_viram_aviso(tmp_path):
@@ -185,7 +189,7 @@ def test_compassos_a_menos_viram_aviso(tmp_path):
     assert "1 de 2 compassos" in r.resumo
 
 
-def test_pedido_de_duo_com_saida_solo_preserva_versao_e_nao_chama_sintese(tmp_path):
+def test_pedido_de_duo_com_saida_solo_adapta_antes_da_camada_contemporanea(tmp_path):
     from muschat.reasoning import responder
     from tests.test_reasoning import ANALISE_OK, FakeChat, FakeRetriever
     c, anterior = _gerar(tmp_path / "base", CompositorFake())
@@ -207,10 +211,11 @@ def test_pedido_de_duo_com_saida_solo_preserva_versao_e_nao_chama_sintese(tmp_pa
         gerador=GeradorFake({**ANALISE_OK, "notacao": "compor"}, plano), chat=chat,
         retriever=FakeRetriever([]), modelo="m", modo="notagen",
         registro=_registro(_instalacao(tmp_path / "duo")), compositor=Solo())
-    assert c.atual is anterior.versao and len(c.versoes) == 1
-    assert not resposta.partituras and not chat.mensagens
-    assert "1 partes (Violoncello)" in resposta.final
-    assert "flauta, violoncelo" in resposta.final
+    assert c.versoes[0] is anterior.versao and len(c.versoes) == 2
+    assert resposta.partituras and chat.mensagens
+    assert [p.instrumento for p in c.atual.ir.partes] == ["Flauta", "Violoncelo"]
+    assert len(c.atual.ir.compassos) == 8
+    assert "orquestração adaptada de 1 para 2 partes" in chat.mensagens[0].config.system_instruction
 
 
 def test_falha_do_processo_vira_mensagem_e_nao_excecao(tmp_path):
