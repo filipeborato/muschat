@@ -168,6 +168,28 @@ def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: 
              reuso: dict[int, str] | None = None) -> Resultado:
     atual = None if base is None else composicao.versoes[base].ir
     try:
+        efetivo = plano.motor if modo == "automatico" else modo
+        if (efetivo == "hibrido" and plano.instrumentos
+                and any(o.procedimento == "serie_harmonica" for o in plano.operacoes)):
+            operacoes = []
+            for k, op in enumerate(plano.operacoes):
+                operacoes.append(op)
+                if op.procedimento != "serie_harmonica":
+                    continue
+                seguintes = plano.operacoes[k + 1:]
+                proxima_serie = next((i for i, seguinte in enumerate(seguintes)
+                                     if seguinte.procedimento == "serie_harmonica"), len(seguintes))
+                if not any(o.procedimento == "orquestrar_material" for o in seguintes[:proxima_serie]):
+                    valores = _parametros(op, catalogo, atual is not None)
+                    operacoes.append(Operacao(procedimento="orquestrar_material", secao=op.secao,
+                        parametros=[Parametro(nome=n, valor=valores[n]) for n in ("compassos", "pausas")]))
+            if plano.tecnicas and not any(o.procedimento in ("aplicar_tecnicas", "tecnicas_por_gesto")
+                                         for o in operacoes):
+                operacoes.append(Operacao(procedimento="tecnicas_por_gesto"))
+            try:
+                plano = Plano.model_validate({**plano.model_dump(), "operacoes": [o.model_dump() for o in operacoes]})
+            except ValidationError as exc:
+                raise Recusa("o plano híbrido completo excede os limites; reduza o número de operações") from exc
         if atual is None and plano.secoes:
             ordenadas = sorted(plano.secoes, key=lambda s: s.compasso_inicial)
             if ordenadas[0].compasso_inicial != 1 or any(

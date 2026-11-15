@@ -251,6 +251,27 @@ def test_openmusic_real_detectado():
 
 # --- ticket 09: híbrido ------------------------------------------------------------------------------------------------
 
+
+def test_hibrido_com_plano_incompleto_compoe_em_vez_de_entregar_reservatorio(tmp_path):
+    plano = _plano(parametros={"parciais": 16, "compassos": 8, "pausas": 0})
+    plano["tecnicas"] = ["sul tasto"]
+    c, r, _ = _rodar(plano, modo="hibrido", registro=COM_OM, pasta=tmp_path)
+    assert r.tarefa is not None and len(c.pendente.decisao.etapas) == 3
+    assert c.pendente.parametros[1] == {"compassos": 8, "pausas": 0}
+    r = retomar(c, SAIDA_16)
+    assert r.versao is not None, r.resumo
+    assert len(r.versao.ir.partes) == 4 and len(r.versao.ir.compassos) == 8
+    assert any(e.tecnicas for _, _, e in r.versao.ir.eventos() if hasattr(e, "tecnicas"))
+    assert r.versao.experimento["procedimentos"] == [
+        "serie_harmonica", "orquestrar_material", "tecnicas_por_gesto"]
+
+
+def test_hibrido_material_explicito_sem_instrumentos_continua_material(tmp_path):
+    c, r, _ = _rodar(_plano(instrumentos=[]), modo="hibrido", registro=COM_OM, pasta=tmp_path)
+    assert len(c.pendente.decisao.etapas) == 1
+    r = retomar(c, SAIDA_16)
+    assert r.versao.ir.partes[0].instrumento == "Material espectral"
+
 def test_hibrido_pausa_no_openmusic_e_a_retomada_completa_as_outras_etapas(tmp_path):
     plano = _hibrido({"procedimento": "aplicar_tecnicas"}) | {"tecnicas": ["harmonico"]}
     c, r, _ = _rodar(plano, modo="hibrido", registro=COM_OM, pasta=tmp_path)

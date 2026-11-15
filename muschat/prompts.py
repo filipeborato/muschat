@@ -120,6 +120,10 @@ abaixo e preenche parâmetros dentro das faixas. Só existem estes procedimentos
 
 - operacoes: um ou mais procedimentos do catálogo, na ordem de execução; parâmetros como pares \
 nome/valor (omita um parâmetro para usar o padrão).
+- No modo Híbrido, serie_harmonica no OpenMusic gera apenas um reservatório de alturas, não a peça instrumental.
+  Para compor, encadeie orquestrar_material com os compassos e pausas pedidos e depois as transformações
+  e técnicas solicitadas. Preencha instrumentos. Não encerre um pedido de composição no reservatório.
+  Para pedir somente material espectral, deixe instrumentos vazio e explique que não é uma peça orquestrada.
 - instrumentos: um nome por parte, só destes (por família) — {instrumentos}. Quarteto de cordas = \
 ["violino", "violino", "viola", "violoncelo"]; clarone = clarinete baixo (não é o clarinete). Só \
 para procedimentos que criam peça nova.
