@@ -159,7 +159,8 @@ MUSCHAT_NOTAGEN=1
 ```
 
 Set `MUSCHAT_NOTAGEN=0` (or remove it) to turn it off. Each generation loads the model (~6 GB of weights) and
-takes about 35 s for 4 bars and 1 min for 16 bars on the RTX 4060; the plan caps a call at 16 bars. Reapplying a
+stops after the requested complete measures (1 to 16), instead of generating a whole piece before trimming it.
+An eight-bar local test completed in about 33 seconds; time varies with instrumentation and hardware. Reapplying a
 Version reuses the stored MusicXML unless you change the number of bars. Ask, for example: *"oito compassos de
 quarteto de cordas à maneira de Fauré, depois desloque o registro uma oitava acima"*.
 

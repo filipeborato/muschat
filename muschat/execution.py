@@ -14,7 +14,8 @@ from muschat.notation.techniques import fits_instrument
 from muschat.openmusic import create_task, import_output
 from muschat.preservation import verify_step
 from muschat.procedures import Procedure
-from muschat.score_ir import Note, Part, Provenance, ScoreIR
+from muschat.procedures.common import IdGenerator, MeasureGrid, map_voices, split_event
+from muschat.score_ir import Note, Rest, Part, Voice, Provenance, ScoreIR
 from muschat.security import sanitize
 
 
@@ -139,6 +140,7 @@ def _notagen_step(
         raise RefusalError(
             f"step {k + 1} ({op.procedure}): unreadable output: {_first_line(exc)}"
         ) from exc
+    ir = _normalize_notagen_durations(ir)
     if len(ir.measures) < requested_measures:
         warnings.append(
             f"NotaGen wrote {len(ir.measures)} of {requested_measures} measures"
@@ -181,6 +183,36 @@ def _notagen_step(
     return StepCompleted(
         updated, external_output=xml, warnings=[sanitize(w) for w in warnings]
     )
+
+
+def _normalize_notagen_durations(ir: ScoreIR) -> ScoreIR:
+    grid, ids = MeasureGrid(ir), IdGenerator(ir)
+
+    def normalize_voice(_part: Part, voice: Voice) -> Voice:
+        tuplet_members = {
+            event_id for group in voice.tuplets for event_id in group.events
+        }
+        events = [
+            fragment
+            for event in voice.events
+            for fragment in (
+                split_event(
+                    event,
+                    event.start,
+                    event.duration,
+                    grid,
+                    ids,
+                    sustain=isinstance(event, Note),
+                )
+                if isinstance(event, (Note, Rest)) and event.id not in tuplet_members
+                else [event]
+            )
+        ]
+        if events and isinstance(events[-1], Note) and events[-1].tied:
+            events[-1] = events[-1].model_copy(update={"tied": False})
+        return voice.model_copy(update={"events": events})
+
+    return map_voices(ir, normalize_voice)
 
 
 def _with_instrument(part: Part, name: str) -> Part:

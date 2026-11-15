@@ -377,3 +377,31 @@ def test_local_notagen_resolves_paths_before_changing_working_directory(tmp_path
     python = os.path.relpath(sys.executable, tmp_path) if relative else sys.executable
     backend = LocalNotaGen(NotaGenInstallation(python, directory, ("A_B_C",)))
     assert backend.generate("A_B_C", 1, 1) == b"<score/>"
+
+
+def test_notagen_compound_rest_is_split_without_changing_rhythm(tmp_path):
+    from fractions import Fraction
+    from muschat.score_ir import Rest
+
+    class CompoundRestComposer:
+        def generate(self, *args):
+            attributes = ATTRIBUTES.replace("<beats>3</beats>", "<beats>4</beats>")
+            music = _note_xml("C", 4, 1, "eighth") + "<note><rest/><duration>7</duration><voice>1</voice><type>half</type><dot/><dot/></note>"
+            return _xml(f'<part id="P1"><measure number="1">{attributes}{music}</measure></part>')
+
+    _, result = _generate(tmp_path, CompoundRestComposer(), instruments=("violin",))
+    assert result.version is not None, result.summary
+    events = result.version.ir.parts[0].voices[0].events
+    assert [e.duration for e in events] == [Fraction(1,8), Fraction(1,2), Fraction(3,8)]
+    assert isinstance(events[1], Rest) and isinstance(events[2], Rest)
+    assert events[-1].end == 1
+
+
+def test_notagen_cutoff_closes_outgoing_tie_at_voice_end(tmp_path):
+    class TiedEnding:
+        def generate(self, *args):
+            return _xml(f'<part id="P1"><measure number="1">{ATTRIBUTES}{_note_xml("C", 4, 6, "half", extra="<dot/><tie type='start'/>")}</measure></part>')
+
+    _, result = _generate(tmp_path, TiedEnding(), instruments=("violin",))
+    assert result.version is not None, result.summary
+    assert not result.version.ir.parts[0].voices[0].events[-1].tied
