@@ -161,7 +161,7 @@ def _vozes_ce(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None
 def _ce_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None) -> str:
     """Problema impossível não vai ao OpenMusic (a busca pode travar o app): conferido aqui antes."""
     vozes = _vozes_ce(p, atual, plano)
-    if p["sem_unissono"] and len({a for v in vozes for a in v.dominio}) < len(vozes):
+    if p["sem_unissono"] == 2 and len({a for v in vozes for a in v.dominio}) < len(vozes):
         raise ValueError(f"sem uníssono pede pelo menos {len(vozes)} alturas diferentes entre as vozes; nada enviado")
     if (ataques := sum(len(v.cadeias) for v in vozes)) > LIMITE_ATAQUES_CE:
         raise ValueError(f"{ataques} ataques no trecho; o limite é {LIMITE_ATAQUES_CE} (selecione menos compassos)")

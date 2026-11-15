@@ -182,8 +182,10 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
                   "microtom": Faixa(0, 2, 1, "aproximação: 0 semitom, 1 quarto de tom, 2 oitavo de tom"),
                   "salto_maximo": Faixa(100, 2400, 700, "maior intervalo entre notas seguidas de uma voz",
                                         unidade="cents"),
-                  "sem_unissono": Faixa(0, 1, 1, "1 = alturas simultâneas todas diferentes"),
-                  "sem_cruzamento": Faixa(0, 1, 1, "1 = a parte de cima nunca soa abaixo da de baixo"),
+                  "sem_unissono": Faixa(0, 2, 1, "alturas simultâneas diferentes: 0 desligada, 1 preferência, "
+                                        "2 obrigatória (pode não ter solução)"),
+                  "sem_cruzamento": Faixa(0, 2, 1, "a parte de cima acima da de baixo: 0 desligada, 1 preferência, "
+                                          "2 obrigatória (pode não ter solução)"),
                   "notas_comuns": Faixa(0, 1, 1, "1 = preferir repetir a altura anterior quando ela serve")},
                  None),
     Procedimento("sintese_aditiva", "Só no OpenMusic (OMChroma + Csound): as notas da seleção controlam uma "

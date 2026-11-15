@@ -3,7 +3,8 @@
 ;;; porte para OpenMusic de Paulo Raposo).
 ;;;
 ;;; Lê <pasta>/entrada.txt (só inteiros):
-;;;   V S U C H M        vozes, salto máximo (cents), sem uníssono (0/1), sem cruzamento (0/1), notas comuns (0/1),
+;;;   V S U C H M        vozes, salto máximo (cents), sem uníssono e sem cruzamento (0 desligada, 1 preferência,
+;;;                      2 obrigatória), notas comuns (0/1),
 ;;;                      número de variáveis do solver
 ;;;   NUM DEN            métrica
 ;;;   por voz: E n1 d1 n2 d2 ...   o ritmo fixo (E eventos; n/d da semibreve; n negativo = pausa)
@@ -80,6 +81,14 @@
   (let ((soando (remove nil alturas)))
     (= (length soando) (length (remove-duplicates soando)))))
 
+(defun muschat-ce-entre-vozes (nivel regra todas)
+  "1 = preferência (heurística: ordena os candidatos, nunca falha); 2 = obrigatória. Obrigatória entre vozes
+trava a busca com o ritmo travado (visto no OM real: a voz de cima fica sem altura acima das outras e o solver não
+recua os motores travados), por isso a preferência é o padrão."
+  (case nivel
+    (1 (cluster-engine::r-pitch-pitch regra todas '(0) :all :exclude-gracenotes :pitch :heur-switch 10))
+    (2 (cluster-engine::r-pitch-pitch regra todas '(0) :all :exclude-gracenotes :pitch))))
+
 (defun muschat-alturas-por-restricoes (pasta)
   (handler-case
       (let* ((numeros (muschat-ce-ler (merge-pathnames "entrada.txt" pasta)))
@@ -97,10 +106,8 @@
                (append
                 ;; cada regra devolve uma lista de regras; a lista final tem de ser plana (filter-rules-from-input)
                 (cluster-engine::r-pitches-one-voice #'muschat-ce-salto-ok todas :pitches)
-                (when (and (= unissono 1) (> v 1))
-                  (cluster-engine::r-pitch-pitch #'muschat-ce-sem-unissono todas '(0) :all :exclude-gracenotes :pitch))
-                (when (and (= cruzamento 1) (> v 1))
-                  (cluster-engine::r-pitch-pitch #'muschat-ce-decrescente todas '(0) :all :exclude-gracenotes :pitch))
+                (when (> v 1) (muschat-ce-entre-vozes unissono #'muschat-ce-sem-unissono todas))
+                (when (> v 1) (muschat-ce-entre-vozes cruzamento #'muschat-ce-decrescente todas))
                 (when (= comuns 1)
                   (cluster-engine::hr-pitches-one-voice #'muschat-ce-repete todas :pitches))))
              ;; rnd? = t: sem ele o solver escolhe sempre o primeiro candidato (as alturas mais graves)
