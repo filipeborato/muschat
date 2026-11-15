@@ -446,7 +446,9 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
             plano = Plano.model_validate({**plano.model_dump(), "secoes": secoes})
         return plano
     except ValidationError as exc:
-        raise Recusa("o plano composicional devolvido pelo modelo não é válido.") from exc
+        campos = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}"
+                           for e in exc.errors(include_input=False, include_url=False)[:3])
+        raise Recusa(f"plano composicional inválido: {campos}.") from exc
 
 
 def _parametros(op: Operacao, catalogo: dict[str, Procedimento], existe: bool) -> dict[str, float]:

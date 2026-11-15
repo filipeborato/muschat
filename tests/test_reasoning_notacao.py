@@ -181,12 +181,19 @@ def test_composicao_chega_ao_chat_mesmo_sem_sintese(falha):
     assert len(r.partituras) == 1 and r.partituras[0].origem == "composicao"
 
 
-def test_plano_recusado_chega_a_sintese_sem_partitura():
+def test_plano_recusado_mostra_causa_sem_sintese_substituir_por_proposta():
     composicao = Composicao()
     resp, g, c = _compor("compor", json.dumps({**PLANO, "operacoes": [{"procedimento": "rm -rf"}]}),
                          composicao=composicao)
     assert resp.partituras == [] and composicao.atual is None
-    assert "recusada" in _sistema(c)
+    assert "recusada" in resp.final and "nenhum motor executa rm -rf" in resp.final
+    assert c.mensagens == []
+
+
+def test_plano_invalido_exibe_campo_que_impediu_execucao():
+    resp, _, chat = _compor("compor", json.dumps({**PLANO, "operacoes": []}))
+    assert "operacoes" in resp.final and "inválido" in resp.final
+    assert not resp.partituras and chat.mensagens == []
 
 
 def test_pergunta_comum_nao_passa_pelo_orquestrador():

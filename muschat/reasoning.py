@@ -159,6 +159,8 @@ def responder(
                 resultado.resumo + f" Saída esperada: {resultado.tarefa.patch.saida}. "
                 "Execute o patch e cole somente os números aqui no chat, ou importe saida.txt pelo painel. "
                 "A composição ainda não foi concluída.", analise.model_dump(), trechos, False)
+        if resultado.versao is None:
+            return Resposta(resultado.resumo, analise.model_dump(), trechos, False)
     else:
         partituras = _partituras(pergunta_segura, analise, trechos, gerador=gerador, chat=chat, modelo=modelo)
 
