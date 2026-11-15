@@ -20,117 +20,17 @@ from muschat.plan import (
     normalize_recipe,
 )
 from muschat.router import RoutingDecision
-from muschat.score_ir import ScoreDiff, ScoreIR, diff_scores, normalize_clef, normalize_source, normalize_technique
+from muschat.score_ir import (
+    ScoreDiff,
+    ScoreIR,
+    diff_scores,
+    migrate_legacy_score_ir_dict,
+    normalize_clef,
+    normalize_source,
+    normalize_technique,
+)
 
 _REVERSE_PROCEDURE_ALIASES: dict[str, str] = {v: k for k, v in PROCEDURE_ALIASES.items()}
-
-_EVENT_KIND_ALIASES: dict[str, str] = {
-    "nota": "note",
-    "note": "note",
-    "pausa": "rest",
-    "rest": "rest",
-    "eletronico": "electronic",
-    "electronic": "electronic",
-    "curva": "curve",
-    "curve": "curve",
-    "espectral": "spectral",
-    "spectral": "spectral",
-}
-
-
-def migrate_legacy_score_ir_dict(raw: dict[str, Any]) -> dict[str, Any]:
-    """Convert a legacy Portuguese `MusicIR` dictionary into the canonical English `ScoreIR` dictionary shape."""
-    if "measures" in raw and "parts" in raw:
-        return raw
-    measures = [
-        {
-            "numerator": m.get("numerator", m.get("numerador")),
-            "denominator": m.get("denominator", m.get("denominador")),
-            "tempo": m.get("tempo", m.get("andamento")),
-            "duration": m.get("duration", m.get("duracao")),
-        }
-        for m in raw.get("measures", raw.get("compassos", []))
-    ]
-    parts = []
-    for p in raw.get("parts", raw.get("partes", [])):
-        voices = []
-        for v in p.get("voices", p.get("vozes", [])):
-            events = []
-            for e in v.get("events", v.get("eventos", [])):
-                raw_kind = str(e.get("kind", e.get("tipo", "note")))
-                kind = _EVENT_KIND_ALIASES.get(raw_kind, raw_kind)
-                prov = e.get("provenance", e.get("proveniencia", {}))
-                norm_prov = {
-                    "source": normalize_source(prov.get("source", prov.get("origem", "llm"))),
-                    "author": prov.get("author", prov.get("autor")),
-                    "operation": prov.get("operation", prov.get("operacao")),
-                }
-                ev: dict[str, Any] = {
-                    "id": e["id"],
-                    "kind": kind,
-                    "start": e.get("start", e.get("inicio")),
-                    "duration": e.get("duration", e.get("duracao")),
-                    "provenance": norm_prov,
-                }
-                if kind == "note":
-                    ev["pitches"] = [
-                        {
-                            "midicents": a["midicents"],
-                            "spelling": a.get("spelling", a.get("grafia")),
-                        }
-                        for a in e.get("pitches", e.get("alturas", []))
-                    ]
-                    ev["techniques"] = [
-                        normalize_technique(t) for t in e.get("techniques", e.get("tecnicas", []))
-                    ]
-                    ev["dynamic"] = e.get("dynamic", e.get("dinamica"))
-                    ev["text"] = e.get("text", e.get("texto"))
-                    ev["glissando"] = e.get("glissando", False)
-                    ev["tied"] = e.get("tied", e.get("ligada", False))
-                elif kind == "rest":
-                    ev["dynamic"] = e.get("dynamic", e.get("dinamica"))
-                    ev["text"] = e.get("text", e.get("texto"))
-                elif kind == "electronic":
-                    ev["description"] = e.get("description", e.get("descricao", ""))
-                elif kind == "curve":
-                    ev["parameter"] = e.get("parameter", e.get("parametro", ""))
-                    ev["points"] = e.get("points", e.get("pontos", []))
-                elif kind == "spectral":
-                    ev["partials"] = [
-                        {
-                            "frequency": pt.get("frequency", pt.get("frequencia")),
-                            "amplitude": pt.get("amplitude"),
-                            "phase": pt.get("phase", pt.get("fase", 0.0)),
-                        }
-                        for pt in e.get("partials", e.get("parciais", []))
-                    ]
-                events.append(ev)
-            tuplets = [
-                {
-                    "id": q["id"],
-                    "numerator": q.get("numerator", q.get("numerador")),
-                    "denominator": q.get("denominator", q.get("denominador")),
-                    "events": q.get("events", q.get("eventos", [])),
-                    "parent": q.get("parent", q.get("pai")),
-                }
-                for q in v.get("tuplets", v.get("quialteras", []))
-            ]
-            voices.append({"id": v["id"], "events": events, "tuplets": tuplets})
-        parts.append(
-            {
-                "id": p["id"],
-                "instrument": normalize_instrument_name(p.get("instrument", p.get("instrumento", ""))),
-                "clef": normalize_clef(p.get("clef", p.get("clave", "treble"))),
-                "range": p.get("range", p.get("tessitura")),
-                "voices": voices,
-            }
-        )
-    return {
-        "title": raw.get("title", raw.get("titulo", "")),
-        "composer": raw.get("composer", raw.get("compositor")),
-        "measures": measures,
-        "parts": parts,
-    }
 
 
 def migrate_legacy_plan_dict(raw: dict[str, Any]) -> dict[str, Any]:
@@ -329,22 +229,17 @@ class OmTask(BaseModel):
 
     @model_validator(mode="after")
     def _validate_catalog_ranges(self) -> "OmTask":
-        from muschat.openmusic import PATCHES
-        from muschat.procedimentos import CATALOGO
+        from muschat.om_patches import PATCHES
+        from muschat.procedures import CATALOG
 
-        legacy_proc = _REVERSE_PROCEDURE_ALIASES.get(self.procedure, self.procedure)
-        patch_key = self.procedure if self.procedure in PATCHES else legacy_proc
-        cat_key = self.procedure if self.procedure in CATALOGO else legacy_proc
-        if patch_key not in PATCHES or cat_key not in CATALOGO:
+        if self.procedure not in PATCHES or self.procedure not in CATALOG:
             raise ValueError(f"task references procedure without approved patch: {self.procedure}")
-        spec_ranges = {
-            normalize_parameter_name(k, self.procedure): f for k, f in CATALOGO[cat_key].parametros.items()
-        }
+        spec_ranges = CATALOG[self.procedure].parameters
         if set(self.parameters) != set(spec_ranges):
             raise ValueError(f"task parameters do not match {self.procedure}")
         for name, val in self.parameters.items():
             r = spec_ranges[name]
-            if not r.minimo <= val <= r.maximo or (r.inteiro and val != int(val)):
+            if not r.min_value <= val <= r.max_value or (r.integer and val != int(val)):
                 raise ValueError(f"task parameter {name}={val:g} out of range")
         return self
 

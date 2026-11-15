@@ -1,75 +1,101 @@
-"""Bridge NotaGen (opcional): modelo local de geração simbólica (MIT, github.com/ElectricAlexis/NotaGen) que escreve
-frases e ritmo de música de câmara a partir de uma condição período-compositor-instrumentação.
+"""NotaGen-X symbolic engine integration: installation discovery and isolated subprocess execution (ADR 0002)."""
 
-Roda num ambiente Python próprio (torch/CUDA, versões incompatíveis com o Muschat), por processo: o Muschat chama
-`servicos/notagen_gerar.py` com o python desse ambiente e lê o MusicXML que ele grava. Nada do modelo é importado aqui.
-"""
-
-import json
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-PESOS = "weights_notagenx_p_size_16_p_length_1024_p_layers_20_h_size_1280.pth"  # NotaGen-X, em gradio/
-SCRIPT = Path(__file__).resolve().parent.parent / "servicos" / "notagen_gerar.py"
-TIMEOUT = 900  # s; 16 compassos levam ~1 min numa RTX 4060, o resto é carregar 6 GB de pesos
+WEIGHTS_FILE = "weights_notagenx_p_size_16_p_length_1024_p_layers_20_h_size_1280.pth"
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "services" / "notagen_generate.py"
+TIMEOUT = 600  # seconds
 
 
-class Compositor(Protocol):
-    """Gera material novo e devolve MusicXML. Levanta ValueError com a mensagem ao usuário quando falha."""
-
-    def gerar(self, condicao: str, compassos: int, semente: int) -> bytes: ...
+class ComposerBackend(Protocol):
+    def generate(self, condition: str, measures: int, seed: int) -> bytes: ...
 
 
 @dataclass(frozen=True)
-class InstalacaoNotaGen:
+class NotaGenInstallation:
     python: str
-    pasta: str  # raiz do repositório NotaGen
-    condicoes: tuple[str, ...]  # "Período_Compositor_Instrumentação", as que o NotaGen-X aceita
+    directory: str
+    conditions: tuple[str, ...]
+
+    @property
+    def pasta(self) -> str:
+        return self.directory
+
+    @property
+    def condicoes(self) -> tuple[str, ...]:
+        return self.conditions
 
 
-def detectar_notagen(python: str, pasta: str) -> InstalacaoNotaGen | str:
-    """Instalação utilizável, ou o motivo de não ser (vai para o Registro)."""
-    if not Path(python).is_file():
-        return f"python do ambiente do NotaGen não encontrado em {python} (defina NOTAGEN_PYTHON)"
-    gradio = Path(pasta) / "gradio"
-    if not (gradio / PESOS).is_file():
-        return f"pesos do NotaGen-X não encontrados em {gradio} (baixe {PESOS}; ver README)"
-    try:
-        texto = (gradio / "prompts.txt").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return f"lista de condições {gradio / 'prompts.txt'} ilegível ({exc.__class__.__name__}); reinstale o NotaGen"
-    condicoes = tuple(linha.strip() for linha in texto.splitlines() if linha.strip())
-    # absolutos: o processo roda com o diretório de trabalho em gradio/
-    return InstalacaoNotaGen(str(Path(python).resolve()), str(Path(pasta).resolve()), condicoes)
+def detect_notagen(python: str | None, directory: str | None) -> NotaGenInstallation | str:
+    """Return `NotaGenInstallation` when Python, weights, and `prompts.txt` are ready, or a reason string otherwise."""
+    if not python or not Path(python).is_file():
+        return f"NOTAGEN_PYTHON not found: {python}"
+    if not directory or not (Path(directory) / "gradio" / WEIGHTS_FILE).is_file():
+        return f"NotaGen-X weights not found in {directory}/gradio/{WEIGHTS_FILE}"
+    prompts_file = Path(directory) / "gradio" / "prompts.txt"
+    if not prompts_file.is_file():
+        return f"condition list prompts.txt not found in {prompts_file}"
+    conditions = tuple(
+        dict.fromkeys(line.strip() for line in prompts_file.read_text(encoding="utf-8").splitlines() if line.strip())
+    )
+    if not conditions:
+        return "prompts.txt is empty"
+    return NotaGenInstallation(str(Path(python)), str(Path(directory)), conditions)
 
 
-class NotaGenLocal:
-    """Compositor que roda o NotaGen-X na GPU local, um processo por geração."""
+class LocalNotaGen:
+    """Run `services/notagen_generate.py` in `.venv-notagen` and return raw MusicXML bytes."""
 
-    def __init__(self, instalacao: InstalacaoNotaGen):
-        self.instalacao = instalacao
+    def __init__(self, installation: NotaGenInstallation, *, timeout: float = TIMEOUT) -> None:
+        self.installation = installation
+        self.timeout = timeout
+
+    def generate(self, condition: str, measures: int, seed: int) -> bytes:
+        if condition not in self.installation.conditions:
+            raise ValueError(f"condition {condition!r} is not accepted by NotaGen-X")
+        with tempfile.TemporaryDirectory(prefix="muschat-notagen-") as temp_dir:
+            output_file = Path(temp_dir) / "output.xml"
+            try:
+                subprocess.run(
+                    [
+                        self.installation.python,
+                        str(SCRIPT_PATH),
+                        self.installation.directory,
+                        condition,
+                        str(int(measures)),
+                        str(int(seed)),
+                        str(output_file),
+                    ],
+                    cwd=str(Path(self.installation.directory) / "gradio"),
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    check=True,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ValueError(f"NotaGen exceeded {self.timeout:g} s and was terminated") from exc
+            except (subprocess.CalledProcessError, OSError) as exc:
+                detail = " ".join(
+                    str(getattr(exc, "stderr", "") or getattr(exc, "stdout", "") or exc).strip().splitlines()[-3:]
+                )
+                raise ValueError(f"NotaGen failed: {detail or exc}") from exc
+            if not output_file.is_file() or output_file.stat().st_size == 0:
+                raise ValueError("NotaGen did not produce a MusicXML output file")
+            return output_file.read_bytes()
 
     def gerar(self, condicao: str, compassos: int, semente: int) -> bytes:
-        if condicao not in self.instalacao.condicoes:
-            raise ValueError(f"condição {condicao!r} não é aceita pelo NotaGen-X")
-        # shortcut: carrega o modelo (6 GB) a cada geração; servidor local que mantém o modelo na GPU se a espera
-        # incomodar
-        with tempfile.TemporaryDirectory(prefix="muschat-notagen-") as pasta:
-            saida = Path(pasta) / "saida.musicxml"
-            try:
-                r = subprocess.run([self.instalacao.python, str(SCRIPT), str(saida)], cwd=Path(self.instalacao.pasta) / "gradio",
-                                   input=json.dumps({"condicao": condicao, "compassos": compassos, "semente": semente}),
-                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
-            except subprocess.TimeoutExpired as exc:
-                raise ValueError(f"o NotaGen passou de {TIMEOUT} s sem terminar") from exc
-            except OSError as exc:
-                raise ValueError(f"não foi possível rodar o NotaGen ({exc})") from exc
-            if r.returncode != 0 or not saida.is_file():
-                erro = (r.stderr.strip().splitlines() or ["sem mensagem"])[-1]
-                if "out of memory" in r.stderr.lower():
-                    erro = "a GPU ficou sem memória (feche outros programas que usam a placa)"
-                raise ValueError(f"o NotaGen falhou: {erro[:300]}")
-            return saida.read_bytes()
+        return self.generate(condicao, compassos, semente)
+
+
+# shortcut: temporary compatibility aliases for unmigrated callers; remove in Ticket 03
+PESOS = WEIGHTS_FILE
+SCRIPT = SCRIPT_PATH
+PRAZO = TIMEOUT
+Compositor = ComposerBackend
+InstalacaoNotaGen = NotaGenInstallation
+detectar_notagen = detect_notagen
+NotaGenLocal = LocalNotaGen

@@ -151,8 +151,7 @@ def detect_capabilities(
     notagen: Any | str | None = None,
 ) -> Registry:
     """Detect installed engines, libraries, and engraving backends on this machine."""
-    from muschat.openmusic import PATCHES
-    from muschat.patches_om import csound
+    from muschat.om_patches import PATCHES, find_csound
 
     active_patches = patches if patches is not None else PATCHES
     ly_exec = getattr(lilypond, "executable", getattr(lilypond, "executavel", None)) if lilypond else None
@@ -235,7 +234,7 @@ def detect_capabilities(
         ("Csound", "csound", "renders OMChroma additive synthesis audio (.orc/.sco -> .wav)"),
         ("SuperVP", "supervp", "OM-SuperVP sound analysis (IRCAM Forum, separate license)"),
     ):
-        path = csound(which) if exe == "csound" else which(exe)
+        path = find_csound(which) if exe == "csound" else which(exe)
         caps.append(
             Capability(
                 name,
@@ -254,7 +253,7 @@ def detect_capabilities(
             for p in lib_patches
             if getattr(p, "validated", getattr(p, "validado", False))
             and getattr(p, "file", getattr(p, "arquivo", None))
-            and Path(getattr(p, "file", getattr(p, "arquivo"))).is_file()
+            and Path(getattr(p, "file", getattr(p, "arquivo", None))).is_file()
         )
         missing = [e for e in externals if which(e) is None]
         state: CapabilityState = "unavailable"

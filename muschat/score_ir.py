@@ -335,6 +335,13 @@ class ScoreIR(BaseModel):
     measures: list[Measure] = Field(min_length=1)
     parts: list[Part] = Field(min_length=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: object) -> object:
+        if isinstance(data, dict) and ("titulo" in data or "compassos" in data or "partes" in data):
+            return migrate_legacy_score_ir_dict(data)
+        return data
+
     def measure_starts(self) -> list[Fraction]:
         """Start position of each measure in whole notes."""
         return list(accumulate((m.length for m in self.measures[:-1]), initial=Fraction(0)))
@@ -353,6 +360,148 @@ class ScoreIR(BaseModel):
         if duplicates:
             raise ValueError(f"duplicate ids: {duplicates}")
         return self
+
+
+_DEFAULT_LETTERS = "C C D D E F F G G A A B".split()
+
+
+def spell_pitch(pitch: Pitch, interval: tuple[int, int, int] = (0, 0, 0)) -> tuple[str, Fraction, int]:
+    """Return (step, alteration in semitones, octave); preserves `pitch.spelling` when within 2 semitones."""
+    n = Fraction(pitch.midicents, 100)
+    letter: str | None = pitch.spelling
+    if letter is not None:
+        octave = round((n - PITCH_CLASS[letter]) / 12) - 1
+        if abs(n - 12 * (octave + 1) - PITCH_CLASS[letter]) > 2:
+            letter = None
+    if letter is None:
+        semitone = round(Fraction(pitch.midicents, 50)) * 50 // 100
+        letter, octave = _DEFAULT_LETTERS[semitone % 12], semitone // 12 - 1
+    diatonic, chromatic, octaves = interval
+    octave, index = divmod(7 * octave + "CDEFGAB".index(letter) - diatonic - 7 * octaves, 7)
+    letter = "CDEFGAB"[index]
+    n -= chromatic + 12 * octaves
+    if abs(n - 12 * (octave + 1) - PITCH_CLASS[letter]) > 2:
+        semitone = round(n * 2) // 2
+        letter, octave = _DEFAULT_LETTERS[semitone % 12], semitone // 12 - 1
+    return letter, n - 12 * (octave + 1) - PITCH_CLASS[letter], octave
+
+
+_LEGACY_EVENT_KIND = {
+    "nota": "note",
+    "pausa": "rest",
+    "eletronico": "electronic",
+    "curva": "curve",
+    "espectral": "spectral",
+}
+
+
+def migrate_legacy_score_ir_dict(raw: dict) -> dict:
+    """Convert a legacy Portuguese `MusicIR` dict into a canonical English `ScoreIR` dict."""
+    if "measures" in raw and "parts" in raw:
+        return raw
+
+    def migrate_pitch(p: dict) -> dict:
+        return {
+            "midicents": p["midicents"],
+            "spelling": p.get("spelling", p.get("grafia")),
+        }
+
+    def migrate_provenance(prov: dict) -> dict:
+        return {
+            "source": normalize_source(prov.get("source", prov.get("origem", "composer"))),
+            "author": prov.get("author", prov.get("autor")),
+            "operation": prov.get("operation", prov.get("operacao")),
+        }
+
+    def migrate_event(ev: dict) -> dict:
+        kind = _LEGACY_EVENT_KIND.get(ev.get("kind", ev.get("tipo", "note")), ev.get("kind", ev.get("tipo", "note")))
+        base = {
+            "id": ev["id"],
+            "start": ev.get("start", ev.get("inicio")),
+            "duration": ev.get("duration", ev.get("duracao")),
+            "provenance": migrate_provenance(ev.get("provenance", ev.get("proveniencia", {}))),
+            "kind": kind,
+        }
+        if kind == "note":
+            return {
+                **base,
+                "pitches": [migrate_pitch(p) for p in ev.get("pitches", ev.get("alturas", []))],
+                "techniques": [normalize_technique(t) for t in ev.get("techniques", ev.get("tecnicas", []))],
+                "dynamic": ev.get("dynamic", ev.get("dinamica")),
+                "text": ev.get("text", ev.get("texto")),
+                "glissando": ev.get("glissando", False),
+                "tied": ev.get("tied", ev.get("ligada", False)),
+            }
+        if kind == "rest":
+            return {
+                **base,
+                "dynamic": ev.get("dynamic", ev.get("dinamica")),
+                "text": ev.get("text", ev.get("texto")),
+            }
+        if kind == "electronic":
+            return {
+                **base,
+                "description": ev.get("description", ev.get("descricao", "")),
+            }
+        if kind == "curve":
+            return {
+                **base,
+                "parameter": ev.get("parameter", ev.get("parametro", "")),
+                "points": ev.get("points", ev.get("pontos", [])),
+            }
+        if kind == "spectral":
+            return {
+                **base,
+                "partials": [
+                    {
+                        "frequency": pt.get("frequency", pt.get("frequencia")),
+                        "amplitude": pt.get("amplitude"),
+                        "phase": pt.get("phase", pt.get("fase", 0.0)),
+                    }
+                    for pt in ev.get("partials", ev.get("parciais", []))
+                ],
+            }
+        return base
+
+    def migrate_tuplet(t: dict) -> dict:
+        return {
+            "id": t["id"],
+            "numerator": t.get("numerator", t.get("numerador")),
+            "denominator": t.get("denominator", t.get("denominador")),
+            "events": t.get("events", t.get("eventos", [])),
+            "parent": t.get("parent", t.get("pai")),
+        }
+
+    def migrate_voice(v: dict) -> dict:
+        return {
+            "id": v["id"],
+            "events": [migrate_event(e) for e in v.get("events", v.get("eventos", []))],
+            "tuplets": [migrate_tuplet(t) for t in v.get("tuplets", v.get("quialteras", []))],
+        }
+
+    def migrate_part(p: dict) -> dict:
+        return {
+            "id": p["id"],
+            "instrument": p.get("instrument", p.get("instrumento", "")),
+            "clef": normalize_clef(p.get("clef", p.get("clave", "treble"))),
+            "range": p.get("range", p.get("tessitura")),
+            "voices": [migrate_voice(v) for v in p.get("voices", p.get("vozes", []))],
+        }
+
+    def migrate_measure(m: dict) -> dict:
+        return {
+            "numerator": m.get("numerator", m.get("numerador")),
+            "denominator": m.get("denominator", m.get("denominador")),
+            "tempo": m.get("tempo", m.get("andamento")),
+            "duration": m.get("duration", m.get("duracao")),
+        }
+
+    return {
+        "title": raw.get("title", raw.get("titulo", "Untitled")),
+        "composer": raw.get("composer", raw.get("compositor")),
+        "measures": [migrate_measure(m) for m in raw.get("measures", raw.get("compassos", []))],
+        "parts": [migrate_part(p) for p in raw.get("parts", raw.get("partes", []))],
+    }
 
 
 _POWERS_OF_TWO = [Fraction(1, 2**k) for k in range(7)]  # whole note .. 64th note
@@ -448,4 +597,157 @@ def diff_scores(before: ScoreIR, after: ScoreIR) -> ScoreDiff:
             for n in range(1, max(len(ma), len(mb)) + 1)
             if n > min(len(ma), len(mb)) or ma[n - 1] != mb[n - 1]
         ],
+    )
+
+
+_REV_CLEF = {"treble": "sol", "bass": "fa", "alto": "do3", "tenor": "do4", "percussion": "percussao"}
+_REV_SOURCE = {
+    "composer": "compositor",
+    "llm": "llm",
+    "algorithm": "algoritmo",
+    "openmusic": "openmusic",
+    "external": "externo",
+}
+_REV_TECHNIQUE = {
+    "harmonic": "harmonico",
+    "multiphonic": "multifonico",
+    "bartok pizzicato": "pizz. bartok",
+    "left-hand pizzicato": "pizzicato de mao esquerda",
+    "body percussion": "percussao no corpo",
+    "tongue pizzicato": "pizzicato de lingua",
+    "open": "aberto",
+    "harmon mute": "surdina harmon",
+    "cup mute": "surdina cup",
+    "plunger mute": "surdina plunger",
+    "half valve": "meia valvula",
+    "mouthpiece only": "so bocal",
+    "roll": "rulo",
+    "bowed": "com arco",
+    "hard mallet": "baqueta dura",
+    "soft mallet": "baqueta macia",
+    "brushes": "vassourinha",
+    "string pizzicato": "pizzicato nas cordas",
+    "muted strings": "cordas abafadas",
+    "piano harmonic": "harmonico no piano",
+    "string glissando": "glissando nas cordas",
+    "prepared piano": "piano preparado",
+    "xylophonic": "xilofonico",
+    "fingernail": "com a unha",
+    "pedal glissando": "glissando de pedal",
+    "whispered": "sussurrado",
+    "ingressive": "ingressivo",
+    "tongue click": "estalo de lingua",
+    "accent": "accento",
+    "air sound": "aria",
+}
+_REV_INSTRUMENT = {
+    "violin": "Violino",
+    "viola": "Viola",
+    "cello": "Violoncelo",
+    "double bass": "Contrabaixo",
+    "flute": "Flauta",
+    "oboe": "Oboé",
+    "clarinet": "Clarinete",
+    "bass clarinet": "Clarinete baixo",
+    "bassoon": "Fagote",
+    "horn": "Trompa",
+    "trumpet": "Trompete",
+    "trombone": "Trombone",
+    "tuba": "Tuba",
+    "piano": "Piano",
+    "harp": "Harpa",
+    "percussion": "Percussão",
+    "spectral material": "Material espectral",
+    "electronics (additive synthesis)": "Eletrônica (síntese aditiva)",
+    "spectral analysis (om-supervp)": "Análise espectral (OM-SuperVP)",
+}
+
+
+# shortcut: temporary Ticket 02 bridge; remove in Ticket 03 when notation writers consume ScoreIR directly
+def to_legacy_musicir(ir: ScoreIR) -> object:
+    """Temporary bridge: convert `ScoreIR` to legacy `MusicIR` for not-yet-migrated notation writers in Ticket 02."""
+    from muschat.musicir import MusicIR
+
+    def conv_prov(prov: Provenance) -> dict:
+        return {
+            "origem": _REV_SOURCE.get(prov.source, "algoritmo"),
+            "autor": prov.author,
+            "operacao": prov.operation,
+        }
+
+    def conv_event(ev: Event) -> dict:
+        base = {
+            "id": ev.id,
+            "inicio": ev.start,
+            "duracao": ev.duration,
+            "proveniencia": conv_prov(ev.provenance),
+        }
+        if isinstance(ev, Note):
+            return {
+                **base,
+                "tipo": "nota",
+                "alturas": [{"midicents": p.midicents, "grafia": p.spelling} for p in ev.pitches],
+                "tecnicas": [_REV_TECHNIQUE.get(t, t) for t in ev.techniques],
+                "dinamica": ev.dynamic,
+                "texto": ev.text,
+                "glissando": ev.glissando,
+                "ligada": ev.tied,
+            }
+        if isinstance(ev, Rest):
+            return {**base, "tipo": "pausa", "dinamica": ev.dynamic, "texto": ev.text}
+        if isinstance(ev, ElectronicEvent):
+            return {**base, "tipo": "eletronico", "descricao": ev.description}
+        if isinstance(ev, Curve):
+            return {**base, "tipo": "curva", "parametro": ev.parameter, "pontos": ev.points}
+        if isinstance(ev, SpectralFrame):
+            return {
+                **base,
+                "tipo": "espectral",
+                "parciais": [
+                    {"frequencia": p.frequency, "amplitude": p.amplitude, "fase": p.phase} for p in ev.partials
+                ],
+            }
+        return base
+
+    legacy_title = ir.title.replace("Harmonic series on ", "Série harmônica sobre ")
+    return MusicIR.model_validate(
+        {
+            "titulo": legacy_title,
+            "compositor": ir.composer,
+            "compassos": [
+                {
+                    "numerador": m.numerator,
+                    "denominador": m.denominator,
+                    "andamento": m.tempo,
+                    "duracao": m.duration,
+                }
+                for m in ir.measures
+            ],
+            "partes": [
+                {
+                    "id": p.id,
+                    "instrumento": _REV_INSTRUMENT.get(p.instrument.strip().lower(), p.instrument),
+                    "clave": _REV_CLEF.get(p.clef, "sol"),
+                    "tessitura": p.range,
+                    "vozes": [
+                        {
+                            "id": v.id,
+                            "eventos": [conv_event(e) for e in v.events],
+                            "quialteras": [
+                                {
+                                    "id": t.id,
+                                    "numerador": t.numerator,
+                                    "denominador": t.denominator,
+                                    "eventos": t.events,
+                                    "pai": t.parent,
+                                }
+                                for t in v.tuplets
+                            ],
+                        }
+                        for v in p.voices
+                    ],
+                }
+                for p in ir.parts
+            ],
+        }
     )

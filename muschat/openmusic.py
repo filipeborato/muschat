@@ -1,7 +1,7 @@
-"""Bridge OpenMusic, estratégia assistida (ADR 0001): o Muschat prepara a Tarefa (entrada só com números, patch
-aprovado, instruções), o compositor roda o patch no OM e devolve o arquivo de saída, que é validado e vira MusicIR.
+"""OpenMusic assisted bridge (ADR 0001): Muschat prepares an `OmTask` (numeric-only input, approved patch, and
+instructions), the composer runs the patch in OpenMusic and returns `saida.txt`, which is validated into `ScoreIR`.
 
-Nenhum Lisp é gerado nem executado; nada do OM roda a partir daqui.
+No Lisp code is generated or executed at runtime.
 """
 
 import io
@@ -14,177 +14,434 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from muschat import musicir as ir
-from muschat.patches_om import FALHOU, PATCHES, Contexto, PatchAprovado, material
-from muschat.plano import Plano
+from muschat.composition import OmTask
+from muschat.om_patches import PATCH_FAILED, PATCHES as _CANONICAL_PATCHES, ApprovedPatch, PatchContext
+from muschat.plan import Plan, normalize_parameter_name, normalize_procedure_id
+from muschat.score_ir import Provenance, ScoreIR
 
-# shortcut: relativa à pasta onde o app roda (a raiz do projeto); evoluir para uma pasta configurável se o app
-# passar a rodar de outro lugar
-PASTA_TAREFAS = Path(".muschat") / "openmusic"  # ignorada pelo git
-LIMITE_SAIDA = 256_000  # bytes: uma análise espectral de 64 quadros x 64 parciais cabe com folga
-_NUMERO = re.compile(r"^-?\d+(?:\.\d+)?$")  # um valor; separadores aceitos: espaços e parênteses (lista Lisp)
+# shortcut: relative to the working directory (project root); make configurable if launched elsewhere
+TASKS_DIR = Path(".muschat") / "openmusic"
+MAX_OUTPUT_BYTES = 256_000
+_NUMBER_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 
-# --- descoberta da instalação ------------------------------------------------------------------------------------------
+# shortcut: dual-key registry shim for unmigrated callers; remove in Ticket 03 when patches_om.py is deleted
+class _PatchRegistry(dict[str, ApprovedPatch]):
+    def __getitem__(self, key: str) -> Any:
+        if key in _CANONICAL_PATCHES:
+            return _CANONICAL_PATCHES[key]
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+        if key in _LEGACY_PATCHES:
+            return _LEGACY_PATCHES[key]
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if isinstance(value, ApprovedPatch):
+            _CANONICAL_PATCHES[key] = value
+            super().__setitem__(key, value)
+        else:
+            from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+            _LEGACY_PATCHES[key] = value
+            proc = normalize_procedure_id(key)
+            if proc in _CANONICAL_PATCHES:
+                p = _CANONICAL_PATCHES[proc]
+                updated = ApprovedPatch(
+                    procedure=p.procedure,
+                    library=p.library,
+                    om_function=p.om_function,
+                    description=p.description,
+                    input_format=p.input_format,
+                    output_format=p.output_format,
+                    steps=p.steps,
+                    build_input=p.build_input,
+                    read_output=p.read_output,
+                    author=p.author,
+                    file=getattr(value, "arquivo", p.file),
+                    validated=getattr(value, "validado", p.validated),
+                    executables=p.executables,
+                )
+                _CANONICAL_PATCHES[proc] = updated
+                super().__setitem__(proc, updated)
+
+    def __contains__(self, key: object) -> bool:
+        if key in _CANONICAL_PATCHES or super().__contains__(key):
+            return True
+        from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+        return key in _LEGACY_PATCHES
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def items(self) -> Any:
+        from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+        return _LEGACY_PATCHES.items()
+
+    def values(self) -> Any:
+        from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+        return _LEGACY_PATCHES.values()
+
+
+PATCHES: dict[str, ApprovedPatch] = _PatchRegistry(_CANONICAL_PATCHES)
+
 
 @dataclass(frozen=True)
-class InstalacaoOM:
-    executavel: Path
-    versao: str | None
-    bibliotecas: dict[str, Path] = field(default_factory=dict)  # nome normalizado ("esquisse") -> pasta
+class OmInstallation:
+    executable: Path
+    version: str | None = None
+    libraries: dict[str, Path] = field(default_factory=dict)
+
+    @property
+    def executavel(self) -> Path:
+        return self.executable
+
+    @property
+    def versao(self) -> str | None:
+        return self.version
+
+    @property
+    def bibliotecas(self) -> dict[str, Path]:
+        return self.libraries
 
 
-# shortcut: só as pastas de instalação do Windows; macOS/Linux entram pela variável OPENMUSIC
-def _raizes_padrao() -> list[Path]:
-    bases = [os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
-             os.path.expandvars(r"%LOCALAPPDATA%\Programs"), str(Path.home())]
-    return [d for b in filter(None, bases) if Path(b).is_dir()
-            for d in Path(b).glob("OpenMusic*") if d.is_dir()]
+def _default_roots() -> list[Path]:
+    bases = [
+        os.environ.get("ProgramFiles"),
+        os.environ.get("ProgramFiles(x86)"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs"),
+        str(Path.home()),
+    ]
+    return [
+        d
+        for b in filter(None, bases)
+        if Path(b).is_dir()
+        for d in Path(b).glob("OpenMusic*")
+        if d.is_dir()
+    ]
 
 
-def _executavel(caminho: Path) -> Path | None:
-    if caminho.is_file():
-        return caminho
-    if caminho.is_dir():
-        return next((p for padrao in ("OpenMusic*.exe", "OM*.exe", "OpenMusic*.app", "OpenMusic*")
-                     for p in sorted(caminho.glob(padrao)) if p != caminho and (p.is_file() or p.suffix == ".app")),
-                    None)
+def _find_executable(path: Path) -> Path | None:
+    if path.is_file():
+        return path
+    if path.is_dir():
+        return next(
+            (
+                p
+                for pattern in ("OpenMusic*.exe", "OM*.exe", "OpenMusic*.app", "OpenMusic*")
+                for p in sorted(path.glob(pattern))
+                if p != path and (p.is_file() or p.suffix == ".app")
+            ),
+            None,
+        )
     return None
 
 
-def _bibliotecas(*pastas: Path) -> dict[str, Path]:
-    """Subpastas de bibliotecas, pelo nome sem versão: "Esquisse 2.1" -> "esquisse"."""
-    achadas: dict[str, Path] = {}
-    for pasta in pastas:
-        if pasta.is_dir():
-            for d in sorted(pasta.iterdir()):
+def _scan_libraries(*folders: Path) -> dict[str, Path]:
+    """Discover installed OpenMusic library folders normalized by versionless lowercase name."""
+    found: dict[str, Path] = {}
+    for folder in folders:
+        if folder.is_dir():
+            for d in sorted(folder.iterdir()):
                 if d.is_dir():
-                    nome = re.sub(r"[\s_-]*v?\d[\d.]*$", "", d.name).strip().lower()
-                    achadas.setdefault(nome, d)
-    return achadas
+                    name = re.sub(r"[\s_-]*v?\d[\d.]*$", "", d.name).strip().lower()
+                    found.setdefault(name, d)
+    return found
 
 
-def detectar_openmusic(configurado: str | None = None, *, raizes: list[Path] | None = None,
-                       pasta_usuario: Path | None = None) -> InstalacaoOM | None:
-    """OpenMusic em OPENMUSIC (executável ou pasta) ou nas pastas padrão do Windows; bibliotecas em ~/OM/Libraries
-    (OM 6.13+) e na pasta `libraries` da instalação."""
-    candidatos = ([Path(configurado)] if configurado else []) + (raizes if raizes is not None else _raizes_padrao())
-    usuario = pasta_usuario if pasta_usuario is not None else Path.home() / "OM" / "Libraries"
-    for raiz in candidatos:
-        exe = _executavel(raiz)
+def detect_openmusic(
+    configured: str | None = None,
+    *,
+    roots: list[Path] | None = None,
+    user_libraries_dir: Path | None = None,
+    raizes: list[Path] | None = None,
+    pasta_usuario: Path | None = None,
+) -> OmInstallation | None:
+    """Detect OpenMusic in OPENMUSIC or standard installation directories and scan installed libraries."""
+    search_roots = roots if roots is not None else raizes
+    user_dir = user_libraries_dir if user_libraries_dir is not None else pasta_usuario
+    candidates = ([Path(configured)] if configured else []) + (
+        search_roots if search_roots is not None else _default_roots()
+    )
+    user_lib = user_dir if user_dir is not None else Path.home() / "OM" / "Libraries"
+    for root in candidates:
+        exe = _find_executable(root)
         if exe is None:
             continue
-        pasta = exe.parent if exe.is_file() else exe
-        m = re.search(r"(\d+(?:\.\d+)+)", f"{pasta.name} {exe.name}")
-        return InstalacaoOM(exe, m[1] if m else None, _bibliotecas(usuario, pasta / "libraries", pasta / "Libraries"))
+        folder = exe.parent if exe.is_file() else exe
+        m = re.search(r"(\d+(?:\.\d+)+)", f"{folder.name} {exe.name}")
+        return OmInstallation(
+            exe,
+            m[1] if m else None,
+            _scan_libraries(user_lib, folder / "libraries", folder / "Libraries"),
+        )
     return None
 
 
-# --- patches aprovados: formatos em muschat.patches_om ---------------------------------------------------------------
+def task_input(task: OmTask) -> str:
+    patch = PATCHES[task.procedure]
+    return task.content if task.content is not None else patch.build_input(task.parameters, None, None)
 
-# --- Tarefa ---------------------------------------------------------------------------------------------------------------
+
+def task_instructions(task: OmTask) -> str:
+    p = PATCHES[task.procedure]
+    steps = "\n".join(f"{n}. {s}" for n, s in enumerate(p.steps, 1))
+    file_note = (
+        f"Approved patch: `{p.file}` (copied into this folder)."
+        if p.file
+        else "This patch has not yet been validated in real OpenMusic and is not included in the repository."
+    )
+    lines = task_input(task).strip().splitlines()
+    preview = "\n".join(lines[:8]) + (f"\n… ({len(lines)} lines)" if len(lines) > 8 else "")
+    return (
+        f"# OpenMusic Task {task.id}: {p.om_function} ({p.library})\n\n{p.description}\n\n{file_note}\n\n"
+        f"Input (`entrada.txt`): {p.input_format}\n\n```\n{preview}\n```\n\n"
+        f"Expected output: {p.output_format}.\n\n{steps}\n"
+    )
+
+
+def task_package(task: OmTask) -> bytes:
+    """Build a ZIP archive with `entrada.txt`, `instrucoes.md`, and the approved patch file."""
+    p = PATCHES[task.procedure]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("entrada.txt", task_input(task))
+        z.writestr("instrucoes.md", task_instructions(task))
+        if p.file and Path(p.file).is_file():
+            z.write(p.file, Path(p.file).name)
+    return buffer.getvalue()
+
+
+# Attach helper methods to OmTask so task.input_text(), task.instructions(), task.package() work directly
+OmTask.patch = property(lambda self: PATCHES[self.procedure])  # type: ignore[attr-defined]
+OmTask.input_text = task_input  # type: ignore[attr-defined]
+OmTask.instructions = task_instructions  # type: ignore[attr-defined]
+OmTask.package = task_package  # type: ignore[attr-defined]
+OmTask.entrada = task_input  # type: ignore[attr-defined]
+OmTask.instrucoes = task_instructions  # type: ignore[attr-defined]
+OmTask.pacote = task_package  # type: ignore[attr-defined]
+OmTask.pasta = property(lambda self: self.directory)  # type: ignore[attr-defined]
+OmTask.procedimento = property(lambda self: self.procedure)  # type: ignore[attr-defined]
+OmTask.parametros = property(lambda self: self.parameters)  # type: ignore[attr-defined]
+
+
+def create_task(
+    procedure: str,
+    parameters: dict[str, float],
+    *,
+    root: Path = TASKS_DIR,
+    current: ScoreIR | None = None,
+    plan: Plan | None = None,
+) -> OmTask:
+    """Build numeric `entrada.txt` and write the task folder before pausing for the composer."""
+    proc = normalize_procedure_id(procedure)
+    norm_params = {normalize_parameter_name(k, proc): float(v) for k, v in parameters.items()}
+    if proc not in PATCHES or not PATCHES[proc].file:
+        raise ValueError(f"no approved patch for {procedure}")
+    content = PATCHES[proc].build_input(norm_params, current, plan)
+    task_id = f"om-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+    folder = root / task_id
+    task = OmTask(id=task_id, procedure=proc, parameters=norm_params, directory=str(folder), content=content)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "entrada.txt").write_text(task_input(task), encoding="utf-8")
+    (folder / "instrucoes.md").write_text(task_instructions(task), encoding="utf-8")
+    patch_file = PATCHES[proc].file
+    if patch_file and Path(patch_file).is_file():
+        shutil.copyfile(patch_file, folder / Path(patch_file).name)
+    return task
+
+
+def import_output(
+    task: OmTask,
+    output: bytes | str,
+    *,
+    operation: str,
+    current: ScoreIR | None = None,
+    plan: Plan | None = None,
+    rng: random.Random | None = None,
+) -> ScoreIR:
+    """Validate `saida.txt` (size, UTF-8 text, numbers only) and convert into `ScoreIR` with `openmusic` provenance."""
+    raw = output if isinstance(output, bytes) else output.encode("utf-8")
+    if len(raw) > MAX_OUTPUT_BYTES:
+        raise ValueError(f"output has {len(raw)} bytes; limit is {MAX_OUTPUT_BYTES}")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("output is not valid UTF-8 text") from exc
+    tokens = [t for t in re.split(r"[\s()]+", text) if t]
+    if invalid := [t for t in tokens if not _NUMBER_RE.match(t)]:
+        raise ValueError(f"output contains non-numeric tokens: {invalid[:3]}")
+    values = [float(x) for x in tokens]
+    folder = Path(task.directory)
+    if values == [PATCH_FAILED]:
+        err_file = folder / "erro.txt"
+        detail = err_file.read_text(encoding="utf-8", errors="replace")[:500] if err_file.is_file() else "no erro.txt"
+        raise ValueError(f"patch failed in OpenMusic: {detail.strip()}")
+    p = _CANONICAL_PATCHES[task.procedure]
+    ctx = PatchContext(
+        parameters=task.parameters,
+        input_text=task_input(task),
+        directory=folder,
+        current=current,
+        plan=plan,
+        rng=rng or random.Random(0),
+        provenance=Provenance(source="openmusic", author=p.author, operation=operation),
+    )
+    return p.read_output(values, ctx)
+
+
+# shortcut: temporary legacy compatibility shims for unmigrated callers; remove in Ticket 03
+PASTA_TAREFAS = TASKS_DIR
+LIMITE_SAIDA = MAX_OUTPUT_BYTES
+InstalacaoOM = OmInstallation
+PatchAprovado = ApprovedPatch
+detectar_openmusic = detect_openmusic
+
 
 class Tarefa(BaseModel):
-    """Pacote de uma etapa assistida: guardado na Composição (sobrevive a rerun e vai no JSON)."""
+    """Legacy Portuguese Tarefa schema shim for unmigrated callers (removed in Ticket 03)."""
 
     id: str
     procedimento: str
     parametros: dict[str, float]
     pasta: str
     criada: datetime = Field(default_factory=datetime.now)
-    conteudo: str | None = None  # entrada.txt enviada; None nos JSONs da série harmônica anteriores ao campo
+    conteudo: str | None = None
 
     @model_validator(mode="after")
-    def _valida(self) -> "Tarefa":
-        """A Tarefa pode voltar de um JSON importado: procedimento e parâmetros passam de novo pelas faixas."""
-        from muschat.procedimentos import CATALOGO  # tardio: procedimentos não depende do bridge
+    def _no_catalogo(self) -> "Tarefa":
+        from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+        from muschat.procedimentos import CATALOGO as _LEGACY_CATALOGO
 
-        if self.procedimento not in PATCHES or self.procedimento not in CATALOGO:
-            raise ValueError(f"tarefa com procedimento sem patch aprovado: {self.procedimento}")
-        faixas = CATALOGO[self.procedimento].parametros
+        if self.procedimento not in _LEGACY_PATCHES or self.procedimento not in _LEGACY_CATALOGO:
+            raise ValueError(f"tarefa aponta para procedimento sem patch: {self.procedimento}")
+        faixas = _LEGACY_CATALOGO[self.procedimento].parametros
         if set(self.parametros) != set(faixas):
             raise ValueError(f"parâmetros da tarefa não batem com {self.procedimento}")
-        for nome, valor in self.parametros.items():
+        for nome, val in self.parametros.items():
             f = faixas[nome]
-            if not f.minimo <= valor <= f.maximo or (f.inteiro and valor != int(valor)):
-                raise ValueError(f"tarefa: {nome}={valor:g} fora da faixa")
+            if not f.minimo <= val <= f.maximo or (f.inteiro and val != int(val)):
+                raise ValueError(f"parâmetro {nome}={val:g} fora da faixa na tarefa")
         return self
 
     @property
-    def patch(self) -> PatchAprovado:
-        return PATCHES[self.procedimento]
+    def patch(self) -> Any:
+        from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+        return _LEGACY_PATCHES[self.procedimento]
 
     def entrada(self) -> str:
-        # sem `conteudo` só existem JSONs antigos da série harmônica, cuja entrada vem só dos parâmetros
         return self.conteudo if self.conteudo is not None else self.patch.montar(self.parametros, None, None)
 
     def instrucoes(self) -> str:
         p = self.patch
         passos = "\n".join(f"{n}. {s}" for n, s in enumerate(p.passos, 1))
-        arquivo = (f"Patch aprovado: `{p.arquivo}` (copiado nesta pasta)." if p.arquivo else
-                   "Este patch ainda não foi validado no OpenMusic real e não está no projeto.")
+        nota_arquivo = (
+            f"Patch aprovado: `{p.arquivo}` (copiado para esta pasta)."
+            if p.arquivo
+            else "Este patch ainda não foi validado no OpenMusic real e não está no projeto."
+        )
         linhas = self.entrada().strip().splitlines()
-        conteudo = "\n".join(linhas[:8]) + (f"\n… ({len(linhas)} linhas)" if len(linhas) > 8 else "")
-        return (f"# Tarefa OpenMusic {self.id}: {p.funcao_om} ({p.biblioteca})\n\n{p.descricao}\n\n{arquivo}\n\n"
-                f"Entrada (`entrada.txt`): {p.entrada}\n\n```\n{conteudo}\n```\n\n"
-                f"Saída esperada: {p.saida}.\n\n{passos}\n")
+        amostra = "\n".join(linhas[:8]) + (f"\n… ({len(linhas)} linhas)" if len(linhas) > 8 else "")
+        return (
+            f"# Tarefa OpenMusic {self.id}: {p.funcao_om} ({p.biblioteca})\n\n{p.descricao}\n\n{nota_arquivo}\n\n"
+            f"Entrada (`entrada.txt`): {p.entrada}\n\n```\n{amostra}\n```\n\nSaída esperada: {p.saida}.\n\n{passos}\n"
+        )
 
     def pacote(self) -> bytes:
-        """Zip com entrada.txt e instrucoes.md (e o patch, quando houver), para baixar ou levar a outra máquina."""
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        p = self.patch
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("entrada.txt", self.entrada())
             z.writestr("instrucoes.md", self.instrucoes())
-            if self.patch.arquivo and Path(self.patch.arquivo).is_file():
-                z.write(self.patch.arquivo, Path(self.patch.arquivo).name)
-        return buffer.getvalue()
+            if p.arquivo and Path(p.arquivo).is_file():
+                z.write(p.arquivo, Path(p.arquivo).name)
+        return buf.getvalue()
 
 
-def criar_tarefa(procedimento: str, parametros: dict[str, float], *, raiz: Path = PASTA_TAREFAS,
-                 atual: ir.MusicIR | None = None, plano: Plano | None = None) -> Tarefa:
-    """Monta a entrada (só números, pelo formato do patch) antes de criar a pasta: entrada impossível = nada criado."""
-    if procedimento not in PATCHES or not PATCHES[procedimento].arquivo:
-        raise ValueError(f"não há patch aprovado para {procedimento}")
-    conteudo = PATCHES[procedimento].montar(parametros, atual, plano)
-    tarefa_id = f"om-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
-    pasta = raiz / tarefa_id
-    tarefa = Tarefa(id=tarefa_id, procedimento=procedimento, parametros=parametros, pasta=str(pasta),
-                    conteudo=conteudo)
+def _legacy_criar_tarefa(
+    procedimento: str,
+    parametros: dict[str, float],
+    *,
+    raiz: Path = TASKS_DIR,
+    atual: Any = None,
+    plano: Any = None,
+) -> Tarefa:
+    from muschat.patches_om import PATCHES as _LEGACY_PATCHES
+
+    if procedimento not in _LEGACY_PATCHES or not _LEGACY_PATCHES[procedimento].arquivo:
+        raise ValueError(f"sem patch aprovado para {procedimento}")
+    conteudo = _LEGACY_PATCHES[procedimento].montar(parametros, atual, plano)
+    tid = f"om-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+    pasta = raiz / tid
+    t = Tarefa(
+        id=tid,
+        procedimento=procedimento,
+        parametros={k: float(v) for k, v in parametros.items()},
+        pasta=str(pasta),
+        conteudo=conteudo,
+    )
     pasta.mkdir(parents=True, exist_ok=True)
-    (pasta / "entrada.txt").write_text(tarefa.entrada(), encoding="utf-8")
-    (pasta / "instrucoes.md").write_text(tarefa.instrucoes(), encoding="utf-8")
-    if tarefa.patch.arquivo:
-        shutil.copyfile(tarefa.patch.arquivo, pasta / Path(tarefa.patch.arquivo).name)
-    return tarefa
+    (pasta / "entrada.txt").write_text(t.entrada(), encoding="utf-8")
+    (pasta / "instrucoes.md").write_text(t.instrucoes(), encoding="utf-8")
+    arquivo_patch = _LEGACY_PATCHES[procedimento].arquivo
+    if arquivo_patch and Path(arquivo_patch).is_file():
+        shutil.copyfile(arquivo_patch, pasta / Path(arquivo_patch).name)
+    return t
 
 
-# --- importação da saída ---------------------------------------------------------------------------------------------------
+def _legacy_importar(
+    tarefa: Tarefa,
+    saida: bytes | str,
+    *,
+    operacao: str,
+    atual: Any = None,
+    plano: Any = None,
+    rng: random.Random | None = None,
+) -> Any:
+    from muschat import musicir as legacy_ir
+    from muschat.patches_om import FALHOU as LEGACY_FALHOU, PATCHES as LEGACY_PATCHES, Contexto
 
-def importar(tarefa: Tarefa, saida: bytes | str, *, operacao: str, atual: ir.MusicIR | None = None,
-             plano: Plano | None = None, rng: random.Random | None = None) -> ir.MusicIR:
-    """Valida a saída (tamanho, texto, só números) e entrega ao formato do patch, que confere quantidade e faixas e
-    devolve a MusicIR com proveniência `openmusic`. Levanta ValueError com a mensagem ao usuário."""
-    dados = saida if isinstance(saida, bytes) else saida.encode("utf-8")
-    if len(dados) > LIMITE_SAIDA:
-        raise ValueError(f"a saída tem {len(dados)} bytes; o limite é {LIMITE_SAIDA}")
+    bruto = saida if isinstance(saida, bytes) else saida.encode("utf-8")
+    if len(bruto) > MAX_OUTPUT_BYTES:
+        raise ValueError(f"a saída tem {len(bruto)} bytes; o limite é {MAX_OUTPUT_BYTES}")
     try:
-        texto = dados.decode("utf-8-sig")
+        texto = bruto.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValueError("a saída não é texto (UTF-8)") from exc
-    pedacos = [p for p in re.split(r"[\s()]+", texto) if p]
-    if invalidos := [p for p in pedacos if not _NUMERO.match(p)]:
-        raise ValueError(f"a saída tem algo além de números separados por espaço: {invalidos[:3]}")
-    valores = [float(x) for x in pedacos]
+    partes = [t for t in re.split(r"[\s()]+", texto) if t]
+    if invalidas := [t for t in partes if not _NUMBER_RE.match(t)]:
+        raise ValueError(f"a saída tem algo além de números separados por espaço: {invalidas[:3]}")
+    valores = [float(x) for x in partes]
     pasta = Path(tarefa.pasta)
-    if valores == [FALHOU]:
-        erro = pasta / "erro.txt"
-        detalhe = erro.read_text(encoding="utf-8", errors="replace")[:500] if erro.is_file() else "sem erro.txt"
+    if valores == [LEGACY_FALHOU]:
+        arq = pasta / "erro.txt"
+        detalhe = arq.read_text(encoding="utf-8", errors="replace")[:500] if arq.is_file() else "sem erro.txt"
         raise ValueError(f"o patch falhou no OpenMusic: {detalhe.strip()}")
-    p = tarefa.patch
-    ctx = Contexto(parametros=tarefa.parametros, entrada=tarefa.entrada(), pasta=pasta, atual=atual, plano=plano,
-                   rng=rng or random.Random(0),
-                   proveniencia=ir.Proveniencia(origem="openmusic", autor=p.autor, operacao=operacao))
+    p = LEGACY_PATCHES[tarefa.procedimento]
+    ctx = Contexto(
+        parametros=tarefa.parametros,
+        entrada=tarefa.entrada(),
+        pasta=pasta,
+        atual=atual,
+        plano=plano,
+        rng=rng or random.Random(0),
+        proveniencia=legacy_ir.Proveniencia(origem="openmusic", autor=p.autor, operacao=operacao),
+    )
     return p.ler(valores, ctx)
+
+
+criar_tarefa = _legacy_criar_tarefa
+importar = _legacy_importar

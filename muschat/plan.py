@@ -145,6 +145,9 @@ class Operation(BaseModel):
         default="", description="Only for generate_notagen: one of the conditions listed in the catalog."
     )
 
+    def as_dict(self) -> dict[str, float]:
+        return {p.name: p.value for p in self.parameters}
+
     @model_validator(mode="after")
     def _normalize_procedure_and_params(self) -> "Operation":
         proc = normalize_procedure_id(self.procedure)
@@ -237,6 +240,8 @@ class Plan(BaseModel):
                 updated["mode"] = normalize_mode(updated["mode"])
             if "recipe" in updated and isinstance(updated["recipe"], str):
                 updated["recipe"] = normalize_recipe(updated["recipe"])
+            if "recipe_reason" in updated and "recipe_rationale" not in updated:
+                updated["recipe_rationale"] = updated.pop("recipe_reason")
             return updated
         return data
 
