@@ -18,7 +18,8 @@ from typing import Protocol
 
 import abjad
 
-from muschat.musicir import Compasso, MusicIR, Nota, Parte, Pausa, Quialtera, Voz, ligam, pedacos
+from muschat.instrumentos import instrumento, transposicao
+from muschat.musicir import Altura, Compasso, MusicIR, Nota, Parte, Pausa, Quialtera, Voz, ligam, pedacos
 from muschat.notacao.musicxml import grafia
 from muschat.notacao.tecnicas import Indicacoes, tecnica
 
@@ -40,16 +41,18 @@ AVISO_SEM_LILYPOND = (
 
 # --- MusicIR -> texto LilyPond ----------------------------------------------------------------------------------------
 
-def para_lilypond(ir: MusicIR) -> dict[str, str]:
-    """{"grade": partitura completa, "<instrumento> (<id>)": parte individual} como arquivos .ly autônomos."""
-    fontes = {"grade": _arquivo(ir, ir.partes, ir.titulo)}
+def para_lilypond(ir: MusicIR, *, transposta: bool = False) -> dict[str, str]:
+    """Fontes .ly autônomas: grade em som real por padrão e partes individuais sempre transpostas."""
+    fontes = {"grade": _arquivo(ir, ir.partes, ir.titulo, transposta=transposta)}
     for parte in ir.partes:
-        fontes[f"{parte.instrumento} ({parte.id})"] = _arquivo(ir, [parte], ir.titulo, subtitulo=parte.instrumento)
+        fontes[f"{parte.instrumento} ({parte.id})"] = _arquivo(ir, [parte], ir.titulo, subtitulo=parte.instrumento,
+                                                               transposta=True)
     return fontes
 
 
-def _arquivo(ir: MusicIR, partes: list[Parte], titulo: str, subtitulo: str | None = None) -> str:
-    pautas = [_pauta(ir, p, com_andamento=k == 0) for k, p in enumerate(partes)]
+def _arquivo(ir: MusicIR, partes: list[Parte], titulo: str, subtitulo: str | None = None, *,
+             transposta: bool = False) -> str:
+    pautas = [_pauta(ir, p, com_andamento=k == 0, transposta=transposta) for k, p in enumerate(partes)]
     score = abjad.Score([abjad.StaffGroup(pautas)] if len(pautas) > 1 else pautas)
     cabecalho = f"  title = {_texto(titulo)}\n" + (f"  subtitle = {_texto(subtitulo)}\n" if subtitulo else "")
     return (f'\\version "{".".join(map(str, VERSAO_MINIMA))}"\n\\language "english"\n\n'
@@ -57,11 +60,12 @@ def _arquivo(ir: MusicIR, partes: list[Parte], titulo: str, subtitulo: str | Non
             f"\\score {{\n{abjad.lilypond(score)}\n  \\layout {{ }}\n}}\n")
 
 
-def _pauta(ir: MusicIR, parte: Parte, *, com_andamento: bool) -> abjad.Staff:
+def _pauta(ir: MusicIR, parte: Parte, *, com_andamento: bool, transposta: bool) -> abjad.Staff:
+    intervalo = transposicao(parte.instrumento) if transposta else (0, 0, 0)
     vozes = [v for v in parte.vozes if any(isinstance(e, (Nota, Pausa)) for e in v.eventos)] or parte.vozes[:1]
     inicios = ir.inicios()
     fim = inicios[-1] + ir.compassos[-1].comprimento
-    escritas = [_voz(v, inicios, fim, preencher_com_pausa=k == 0) for k, v in enumerate(vozes)]
+    escritas = [_voz(v, inicios, fim, preencher_com_pausa=k == 0, intervalo=intervalo) for k, v in enumerate(vozes)]
     pauta = abjad.Staff([voz for voz, _ in escritas], name=parte.id, simultaneous=len(escritas) > 1)
     if len(escritas) > 1:
         for k, (voz, _) in enumerate(escritas):
@@ -69,7 +73,11 @@ def _pauta(ir: MusicIR, parte: Parte, *, com_andamento: bool) -> abjad.Staff:
                          abjad.select.leaf(voz, 0))
     primeiras = escritas[0][1]  # início -> primeira figura da voz principal (que preenche a peça toda)
     folha = primeiras[Fraction(0)]
-    abjad.attach(abjad.Clef(_CLAVE[parte.clave]), folha)
+    clave_escrita = instrumento(parte.instrumento).clave_escrita if any(intervalo) else None
+    abjad.attach(abjad.Clef(_CLAVE[clave_escrita or parte.clave]), folha)
+    if any(intervalo):
+        som_do_do, _ = _altura(Altura(midicents=6000, grafia="C"), tuple(-n for n in intervalo))
+        abjad.attach(abjad.LilyPondLiteral(rf"\transposition {som_do_do}"), folha)
     abjad.attach(abjad.InstrumentName(rf"\markup {_texto(parte.instrumento)}"), folha)
     anterior: Compasso | None = None
     for inicio, c in zip(inicios, ir.compassos):
@@ -92,7 +100,7 @@ def _metrica(c: Compasso) -> tuple[int, int]:
 
 
 def _voz(voz: Voz, inicios: list[Fraction], fim: Fraction, *,
-         preencher_com_pausa: bool) -> tuple[abjad.Voice, dict[Fraction, abjad.Leaf]]:
+         preencher_com_pausa: bool, intervalo: tuple[int, int, int]) -> tuple[abjad.Voice, dict[Fraction, abjad.Leaf]]:
     """Voz com quiálteras aninhadas; lacunas viram pausas (voz principal) ou espaços. Devolve também a primeira
     figura escrita em cada posição, para métrica e andamento."""
     eventos = [e for e in voz.eventos if isinstance(e, (Nota, Pausa))]
@@ -133,7 +141,7 @@ def _voz(voz: Voz, inicios: list[Fraction], fim: Fraction, *,
         cadeia = cadeias.get(e.id, [])
         razao = math.prod((Fraction(grupos[g].numerador, grupos[g].denominador) for g in cadeia), start=Fraction(1))
         seguinte = eventos[k + 1] if k + 1 < len(eventos) else None
-        colocar(_folha(e, e.duracao * razao, indicacoes, glissando=isinstance(seguinte, Nota),
+        colocar(_folha(e, e.duracao * razao, indicacoes, intervalo=intervalo, glissando=isinstance(seguinte, Nota),
                        liga=isinstance(e, Nota) and ligam(e, seguinte)), e.inicio, cadeia)
         cursor = e.fim
     lacuna(cursor, fim)
@@ -141,14 +149,14 @@ def _voz(voz: Voz, inicios: list[Fraction], fim: Fraction, *,
 
 
 def _folha(e: Nota | Pausa, notada: Fraction, indicacoes: Indicacoes, *, glissando: bool,
-           liga: bool) -> abjad.Leaf:
+           liga: bool, intervalo: tuple[int, int, int]) -> abjad.Leaf:
     duracao = abjad.Duration(notada.numerator, notada.denominator)
     tecnicas = [tecnica(t) for t in e.tecnicas] if isinstance(e, Nota) else []
     try:
         if isinstance(e, Pausa):
             folha: abjad.Leaf = abjad.Rest.from_duration(duracao)
         else:
-            nomes, setas = zip(*(_altura(a) for a in e.alturas))
+            nomes, setas = zip(*(_altura(a, intervalo) for a in e.alturas))
             nomes = tuple(abjad.NamedPitch(n) for n in nomes)
             folha = (abjad.Note.from_duration_and_pitch(duracao, nomes[0]) if len(nomes) == 1
                      else abjad.Chord.from_duration_and_pitches(duracao, list(nomes)))
@@ -180,9 +188,9 @@ def _folha(e: Nota | Pausa, notada: Fraction, indicacoes: Indicacoes, *, glissan
     return folha
 
 
-def _altura(a) -> tuple[str, str | None]:
+def _altura(a, intervalo: tuple[int, int, int] = (0, 0, 0)) -> tuple[str, str | None]:
     """Nome LilyPond (inglês) e seta de oitavo de tom, se houver."""
-    letra, alter, oitava = grafia(a)
+    letra, alter, oitava = grafia(a, intervalo)
     seta = None
     if (alter * 2).denominator != 1:  # oitavo de tom: escreve o quarto de tom abaixo + seta para cima
         alter -= Fraction(1, 4)

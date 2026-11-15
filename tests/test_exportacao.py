@@ -168,6 +168,18 @@ def test_tecnica_fora_do_registro_curta_demais_ou_sem_altura_precisa_e_apontada(
 
 def test_verificador_usa_a_tessitura_propria_da_parte():
     flauta = _melodia("fl", "Flauta", [(6250, F(1), ["slap"])])
-    curta = flauta.model_copy(update={"tessitura": (6100, 6300)})  # 6250: 0,75 da tessitura própria (> 0,55); 0,07 na da tabela
+    curta = flauta.model_copy(update={"tessitura": (6100, 6300)})  # 6250: 0,75 dela, 0,07 na da tabela
     ir = MusicIR(titulo="t", compassos=[Compasso(numerador=4, denominador=4)], partes=[curta])
     assert metricas(ir)["tecnicas_intocaveis"] == ["fl c.1: slap (Flauta): fora do registro (agudo demais)"]
+
+
+def test_zip_respeita_grade_transposta_sem_mudar_midi():
+    import xml.etree.ElementTree as ET
+    from tests.test_composicao import _quarteto
+
+    c = _quarteto()
+    c.versoes[0].ir.partes[0].instrumento = "Clarinete"
+    with zipfile.ZipFile(io.BytesIO(pacote(c, 0, transposta=True))) as z:
+        raiz = ET.fromstring(z.read("composicao_v1.musicxml"))
+        assert raiz.findtext(".//transpose/chromatic") == "-2"
+        assert z.read("composicao_v1.mid") == para_midi(c.versoes[0].ir)

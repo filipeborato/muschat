@@ -165,11 +165,12 @@ def _seguro(texto: str) -> str:
 
 
 def pacote(c: Composicao, indice: int, *, lilypond: dict[str, str] | None = None, gravacao: Gravacao | None = None,
-           svg: str | None = None, motores: dict[str, str] | None = None) -> bytes:
+           svg: str | None = None, motores: dict[str, str] | None = None, transposta: bool = False) -> bytes:
     """Zip da Versão `indice` só com o que foi produzido: MusicXML, MIDI e JSONs sempre; `.ly`, PDF e SVG se o
     LilyPond gravou, senão o SVG do Verovio se houver."""
     ir, nome = c.versoes[indice].ir, f"composicao_v{indice + 1}"
-    arquivos: dict[str, str | bytes] = {f"{nome}.musicxml": para_musicxml(ir), f"{nome}.mid": para_midi(ir),
+    arquivos: dict[str, str | bytes] = {f"{nome}.musicxml": para_musicxml(ir, transposta=transposta),
+                                        f"{nome}.mid": para_midi(ir),
                                         "composicao.json": c.para_json(),
                                         "experimento.json": experimento_json(c, motores=motores)}
     formatos = ["musicxml", "midi", "json"]

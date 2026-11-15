@@ -19,7 +19,7 @@ from muschat.composicao import Composicao
 from muschat.config import ChaveAusente, carregar_config
 from muschat.erros import mensagem_de_erro
 from muschat.exportacao import PERDAS, experimento_json, metricas, pacote, para_midi
-from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar
+from muschat.notacao.lilypond import Gravacao, Lilypond, detectar, gravar, para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.render import svg_de
 from muschat.orquestrador import abrir, descartar, reaplicar, retomar
@@ -255,18 +255,22 @@ def _exportar(c: Composicao):
     """Downloads da Versão atual, cada um com o que o formato perde."""
     assert c.atual is not None and c.indice is not None
     ir, i, nome = c.atual.ir, c.indice, f"composicao_v{c.indice + 1}"
-    lilypond = exemplo_da_versao(c.atual).lilypond
-    gravacao = _gravar(tuple(lilypond.items())) if lilypond else None  # em cache: a mesma do chat
-    svg = None if gravacao and gravacao.pdfs else _svg(para_musicxml(ir))
     motores = _motores()  # no script: o callable do download roda em outra thread, sem acesso ao cache do app
     with st.popover("Exportar", width="stretch"):
+        transposta = st.checkbox("Grade transposta", value=False, key="grade-transposta")
+        lilypond = exemplo_da_versao(c.atual).lilypond
+        if transposta and lilypond:
+            lilypond = para_lilypond(ir, transposta=True)
+        gravacao = _gravar(tuple(lilypond.items())) if lilypond else None
+        svg = None if gravacao and gravacao.pdfs else _svg(para_musicxml(ir, transposta=transposta))
         st.download_button("composição completa (.zip)", file_name=f"{nome}.zip", mime="application/zip",
                            data=lambda: pacote(c, i, lilypond=lilypond, gravacao=gravacao, svg=svg,
-                                               motores=motores),
+                                               motores=motores, transposta=transposta),
                            on_click="ignore", width="stretch", type="primary")
         st.caption("PDF/.ly só se o LilyPond gravou; SVG do LilyPond ou, sem ele, do Verovio; MusicXML, MIDI, "
                    "JSONs e PERDAS.txt sempre. Cada formato perde o que está descrito abaixo e em PERDAS.txt.")
-        st.download_button("MusicXML", data=lambda: para_musicxml(ir), file_name=f"{nome}.musicxml",
+        st.download_button("MusicXML", data=lambda: para_musicxml(ir, transposta=transposta),
+                           file_name=f"{nome}.musicxml",
                            mime="application/vnd.recordare.musicxml+xml", on_click="ignore", width="stretch")
         st.caption(PERDAS["musicxml"])
         st.download_button("MIDI", data=lambda: para_midi(ir), file_name=f"{nome}.mid", mime="audio/midi",

@@ -2,7 +2,7 @@
 
 A MusicIR guarda som real: transpositores (clarinetes, trompas, saxofones, contrabaixo, piccolo...) aparecem em som
 real, e piano, harpa, marimba e celesta numa pauta só.
-# shortcut: som real e pauta única; evoluir com `transposicao` e pauta dupla na Parte quando a notação pedir.
+# shortcut: pauta única; evoluir com pauta dupla na Parte quando a notação pedir.
 """
 
 import unicodedata
@@ -21,6 +21,8 @@ class Instrumento:
     familia: Familia
     clave: Clave
     tessitura: tuple[int, int]
+    transposicao: tuple[int, int, int] = (0, 0, 0)  # diatônica, cromática, oitavas: escrito -> real
+    clave_escrita: Clave | None = None
 
     @property
     def altura_definida(self) -> bool:
@@ -36,32 +38,32 @@ INSTRUMENTOS: dict[str, Instrumento] = {
     "violino": Instrumento("cordas", "sol", (5500, 10300)),
     "viola": Instrumento("cordas", "do3", (4800, 9100)),
     "violoncelo": Instrumento("cordas", "fa", (3600, 8100)),
-    "contrabaixo": Instrumento("cordas", "fa", (2800, 6700)),
+    "contrabaixo": Instrumento("cordas", "fa", (2800, 6700), (0, 0, -1)),
     # madeiras
-    "piccolo": Instrumento("madeiras", "sol", (7400, 10800)),
+    "piccolo": Instrumento("madeiras", "sol", (7400, 10800), (0, 0, 1)),
     "flauta": Instrumento("madeiras", "sol", (6000, 9800)),
-    "flauta contralto": Instrumento("madeiras", "sol", (5500, 9100)),
-    "flauta baixo": Instrumento("madeiras", "sol", (4800, 8400)),
+    "flauta contralto": Instrumento("madeiras", "sol", (5500, 9100), (-3, -5, 0)),
+    "flauta baixo": Instrumento("madeiras", "sol", (4800, 8400), (0, 0, -1)),
     "oboe": Instrumento("madeiras", "sol", (5800, 9300)),
-    "oboe d'amore": Instrumento("madeiras", "sol", (5600, 8800)),
-    "corne ingles": Instrumento("madeiras", "sol", (5200, 8400)),
-    "requinta": Instrumento("madeiras", "sol", (5500, 9500)),
-    "clarinete": Instrumento("madeiras", "sol", (5000, 9400)),
-    "clarinete baixo": Instrumento("madeiras", "fa", (3400, 7700)),
-    "clarone": Instrumento("madeiras", "fa", (3400, 7700)),
-    "clarinete contrabaixo": Instrumento("madeiras", "fa", (2200, 5800)),
+    "oboe d'amore": Instrumento("madeiras", "sol", (5600, 8800), (-2, -3, 0)),
+    "corne ingles": Instrumento("madeiras", "sol", (5200, 8400), (-4, -7, 0)),
+    "requinta": Instrumento("madeiras", "sol", (5500, 9500), (2, 3, 0)),
+    "clarinete": Instrumento("madeiras", "sol", (5000, 9400), (-1, -2, 0)),
+    "clarinete baixo": Instrumento("madeiras", "fa", (3400, 7700), (-1, -2, -1), "sol"),
+    "clarone": Instrumento("madeiras", "fa", (3400, 7700), (-1, -2, -1), "sol"),
+    "clarinete contrabaixo": Instrumento("madeiras", "fa", (2200, 5800), (-1, -2, -2), "sol"),
     "fagote": Instrumento("madeiras", "fa", (3400, 7600)),
-    "contrafagote": Instrumento("madeiras", "fa", (2200, 5500)),
-    "saxofone soprano": Instrumento("madeiras", "sol", (5600, 8800)),
-    "saxofone alto": Instrumento("madeiras", "sol", (4900, 8100)),
-    "saxofone tenor": Instrumento("madeiras", "fa", (4400, 7600)),
-    "saxofone baritono": Instrumento("madeiras", "fa", (3600, 6900)),
+    "contrafagote": Instrumento("madeiras", "fa", (2200, 5500), (0, 0, -1)),
+    "saxofone soprano": Instrumento("madeiras", "sol", (5600, 8800), (-1, -2, 0)),
+    "saxofone alto": Instrumento("madeiras", "sol", (4900, 8100), (-5, -9, 0)),
+    "saxofone tenor": Instrumento("madeiras", "fa", (4400, 7600), (-1, -2, -1), "sol"),
+    "saxofone baritono": Instrumento("madeiras", "fa", (3600, 6900), (-5, -9, -1), "sol"),
     # metais
-    "trompa": Instrumento("metais", "fa", (3500, 7700)),
-    "trompete": Instrumento("metais", "sol", (5400, 8600)),
-    "trompete piccolo": Instrumento("metais", "sol", (6100, 9300)),
-    "cornet": Instrumento("metais", "sol", (5400, 8400)),
-    "flugelhorn": Instrumento("metais", "sol", (5200, 8100)),
+    "trompa": Instrumento("metais", "fa", (3500, 7700), (-4, -7, 0), "sol"),
+    "trompete": Instrumento("metais", "sol", (5400, 8600), (-1, -2, 0)),
+    "trompete piccolo": Instrumento("metais", "sol", (6100, 9300), (6, 10, 0)),
+    "cornet": Instrumento("metais", "sol", (5400, 8400), (-1, -2, 0)),
+    "flugelhorn": Instrumento("metais", "sol", (5200, 8100), (-1, -2, 0)),
     "trombone": Instrumento("metais", "fa", (4000, 7700)),
     "trombone baixo": Instrumento("metais", "fa", (3400, 7000)),
     "eufonio": Instrumento("metais", "fa", (3400, 7000)),
@@ -69,10 +71,10 @@ INSTRUMENTOS: dict[str, Instrumento] = {
     # percussão com altura definida
     "timpanos": Instrumento("percussao", "fa", (3800, 6000)),
     "marimba": Instrumento("percussao", "sol", (3600, 9600)),
-    "xilofone": Instrumento("percussao", "sol", (6500, 10800)),
+    "xilofone": Instrumento("percussao", "sol", (6500, 10800), (0, 0, 1)),
     "vibrafone": Instrumento("percussao", "sol", (5300, 8900)),
-    "glockenspiel": Instrumento("percussao", "sol", (7900, 10800)),
-    "crotalos": Instrumento("percussao", "sol", (8400, 10800)),
+    "glockenspiel": Instrumento("percussao", "sol", (7900, 10800), (0, 0, 2)),
+    "crotalos": Instrumento("percussao", "sol", (8400, 10800), (0, 0, 2)),
     "sinos tubulares": Instrumento("percussao", "sol", (6000, 7700)),
     # percussão sem altura definida
     "caixa": _sem_altura(),
@@ -94,14 +96,14 @@ INSTRUMENTOS: dict[str, Instrumento] = {
     "chicote": _sem_altura(),
     # teclados
     "piano": Instrumento("teclado", "sol", (2100, 10800)),
-    "celesta": Instrumento("teclado", "sol", (6000, 10800)),
+    "celesta": Instrumento("teclado", "sol", (6000, 10800), (0, 0, 1)),
     "cravo": Instrumento("teclado", "sol", (2900, 8900)),
     "orgao": Instrumento("teclado", "sol", (2400, 9600)),
     "acordeao": Instrumento("teclado", "sol", (4000, 9300)),
     # cordas dedilhadas
     "harpa": Instrumento("harpa", "sol", (2300, 10400)),
-    "violao": Instrumento("violao", "sol", (4000, 8300)),
-    "guitarra": Instrumento("violao", "sol", (4000, 8600)),
+    "violao": Instrumento("violao", "sol", (4000, 8300), (0, 0, -1)),
+    "guitarra": Instrumento("violao", "sol", (4000, 8600), (0, 0, -1)),
     "bandolim": Instrumento("violao", "sol", (5500, 8800)),
     # vozes
     "soprano": Instrumento("voz", "sol", (6000, 8400)),
@@ -166,3 +168,11 @@ def no_registro(altura: int, tessitura: tuple[int, int] | None) -> int:
     while altura > agudo:
         altura -= 1200
     return altura
+
+
+def transposicao(nome: str) -> tuple[int, int, int]:
+    """Intervalo escrito -> real; instrumento desconhecido permanece em som real."""
+    try:
+        return instrumento(nome).transposicao
+    except ValueError:
+        return (0, 0, 0)

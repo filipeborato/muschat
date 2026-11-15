@@ -140,3 +140,45 @@ def test_ligadura_de_prolongamento_atravessa_a_barra_e_some_entre_alturas_difere
     ], compassos=2))["grade"]
     assert ly.count("~") == 1
     assert re.search(r"d2\s*~\s*d2\s+e2", ly)
+
+@pytest.mark.parametrize("nome,nota,declaracao,clave", [
+    ("Clarinete", "dqs'1", r"\transposition bf", "treble"),
+    ("Clarone", "dqs''1", r"\transposition bf,", "treble"),
+    ("Contrabaixo", "cqs''1", r"\transposition c", "bass"),
+    ("Piccolo", "cqs1", r"\transposition c''", "treble"),
+    ("Instrumento inventado", "cqs'1", None, "bass"),
+])
+def test_partes_escritas_e_grade_opcional_sem_mudar_ir(nome, nota, declaracao, clave):
+    ir = _solo([_nota("a", F(0), F(1), 6050)])
+    ir.partes[0].instrumento = nome
+    if nome in ("Clarinete", "Piccolo"):
+        ir.partes[0].clave = "sol"
+    antes = ir.model_dump()
+    fontes = para_lilypond(ir)
+    parte = fontes[f"{nome} (P1)"]
+    assert "cqs'1" in fontes["grade"]
+    assert nota in parte
+    assert rf'\clef "{clave}"' in parte
+    if declaracao:
+        assert declaracao + "\n" in parte
+        assert r"\transposition" not in fontes["grade"]
+    assert nota in para_lilypond(ir, transposta=True)["grade"]
+    assert ir.model_dump() == antes
+
+
+def test_transposicao_de_grafia_extrema_tem_acidente_legivel():
+    ir = _solo([_nota("a", F(0), F(1), 6600)])
+    ir.partes[0].instrumento = "Clarinete"
+    ir.partes[0].vozes[0].eventos[0].alturas[0].grafia = "E"
+    assert "gs'1" in para_lilypond(ir)["Clarinete (P1)"]
+
+
+@pytest.mark.skipif(_REAL is None, reason="LilyPond >= 2.25.26 não detectado")
+def test_compilacao_real_transposta_com_acorde_microtonal_e_varias_partes():
+    ir = quarteto()
+    ir.partes[0].instrumento = "Clarone"
+    ir.partes[1].instrumento = "Saxofone barítono"
+    ir.partes[0].vozes[0].eventos[0].alturas.append(Altura(midicents=6025, grafia="C"))
+    g = gravar(para_lilypond(ir, transposta=True), _REAL)
+    assert g.aviso is None, g.aviso
+    assert len(g.pdfs) == 3 and g.svgs
