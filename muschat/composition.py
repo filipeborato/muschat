@@ -118,6 +118,12 @@ def migrate_legacy_decision_dict(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _migrate_procedure_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("procedure must be a string")
+    return normalize_procedure_id(value)
+
+
 def _migrate_param_dict(params: dict[str, Any], procedure: str = "") -> dict[str, float]:
     return {normalize_parameter_name(k, procedure): float(v) for k, v in params.items()}
 
@@ -173,7 +179,7 @@ def migrate_legacy_experiment_dict(raw: dict[str, Any]) -> dict[str, Any]:
                     if k not in ("motor", "procedimento", "estado")
                 }
                 entry["engine"] = s.get("engine", s.get("motor"))
-                entry["procedure"] = normalize_procedure_id(s.get("procedure", s.get("procedimento", "")))
+                entry["procedure"] = _migrate_procedure_id(s.get("procedure", s.get("procedimento", "")))
                 if "state" in s or "estado" in s:
                     raw_st = str(s.get("state", s.get("estado", "")))
                     entry["state"] = step_state_map.get(raw_st, raw_st)
@@ -215,7 +221,7 @@ class OmTask(BaseModel):
     @classmethod
     def _migrate_legacy(cls, data: object) -> object:
         if isinstance(data, dict):
-            proc = normalize_procedure_id(data.get("procedure", data.get("procedimento", "")))
+            proc = _migrate_procedure_id(data.get("procedure", data.get("procedimento", "")))
             raw_params = data.get("parameters", data.get("parametros", {}))
             params = _migrate_param_dict(raw_params, proc) if isinstance(raw_params, dict) else raw_params
             return {
@@ -342,12 +348,16 @@ class PendingTask(BaseModel):
             for s in (dec_dict.get("steps", []) if isinstance(dec_dict, dict) else [])
         ]
         raw_params = data.get("parameters", data.get("parametros", []))
+        if not isinstance(raw_params, list):
+            raise ValueError("parameters must be a list")
         norm_params = _migrate_param_list(raw_params, step_procs)
         raw_current = data.get("current", data.get("atual"))
         norm_current = (
             migrate_legacy_score_ir_dict(raw_current) if isinstance(raw_current, dict) else raw_current
         )
         raw_inter = data.get("intermediates", data.get("intermediarios", []))
+        if not isinstance(raw_inter, list):
+            raise ValueError("intermediates must be a list")
         norm_inter = [
             migrate_legacy_score_ir_dict(ir) if isinstance(ir, dict) else ir for ir in raw_inter
         ]

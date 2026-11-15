@@ -373,12 +373,12 @@ def _situation_conditions(pr: _SituationProblem) -> tuple[str, bool]:
         if any((c & group) == c for c in culprits):
             continue
         n_slots = sum(len(slots[k]) for k in members)
-        reach = {a for k in members for s in slots[k] for a in domains[s]}
-        if len(reach) < n_slots:
+        group_reach = {a for k in members for s in slots[k] for a in domains[s]}
+        if len(group_reach) < n_slots:
             culprits.append(group)
             who = " + ".join(names[k].capitalize() for k in members)
             verb = "reach" if len(members) > 1 else "reaches"
-            issues.append(f"{who} {verb} {len(reach)} pitches for {n_slots} slots")
+            issues.append(f"{who} {verb} {len(group_reach)} pitches for {n_slots} slots")
     if unreachable := [a for a in pitches if not any(a in d for d in domains)]:
         issues.append(f"no instrument reaches {unreachable}")
     if slow := [r.value for r in pr.constraints if r.kind == "max_density" and r.value is not None and r.value < 0.25]:

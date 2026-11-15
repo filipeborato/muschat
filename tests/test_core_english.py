@@ -471,3 +471,37 @@ def test_composition_english_roundtrip_and_legacy_portuguese_json_migration():
 
 
 
+
+
+@pytest.mark.parametrize("value", [None, 12, {}, []])
+def test_legacy_procedure_identifiers_reject_non_strings(value):
+    from muschat.composition import Experiment, OmTask
+
+    with pytest.raises(ValidationError, match="procedure must be a string"):
+        Experiment.model_validate({"etapas": [{"procedimento": value}]})
+    with pytest.raises(ValidationError, match="procedure must be a string"):
+        OmTask.model_validate({"procedimento": value})
+
+
+def _legacy_pending():
+    return {
+        "pedido": "test", "modelo": "test", "plano": {"goal": "test", "operations": [{"procedure": "harmonic_series"}]},
+        "decisao": {"steps": [], "rationale": [], "mode": "auto"},
+        "semente": 1, "operacao": "op1", "base": None, "etapa": 0, "atual": None,
+    }
+
+
+def test_legacy_pending_missing_collections_default_to_empty():
+    from muschat.composition import PendingTask
+
+    pending = PendingTask.model_validate(_legacy_pending())
+    assert pending.parameters == [] and pending.intermediates == []
+
+
+@pytest.mark.parametrize("field", ["parametros", "intermediarios"])
+@pytest.mark.parametrize("value", [None, 12, "invalid", {}])
+def test_legacy_pending_rejects_malformed_collections(field, value):
+    from muschat.composition import PendingTask
+
+    with pytest.raises(ValidationError, match="must be a list"):
+        PendingTask.model_validate({**_legacy_pending(), field: value})
