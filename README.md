@@ -104,6 +104,48 @@ The [official OM 8.0 release](https://github.com/openmusic-project/openmusic/rel
 RPM/DEB/tarball packages as well as Windows and macOS builds. **Muschat's OpenMusic integration has only been
 validated on Windows**; Linux/macOS adapter behavior and headless execution have not been validated.
 
+### NotaGen: local composition model (optional)
+
+[NotaGen](https://github.com/ElectricAlexis/NotaGen) (MIT) is a symbolic music model trained on classical scores.
+When enabled, the plan can start a piece with **`gerar_notagen`**: NotaGen-X writes phrases, rhythm and articulation
+for chamber music from a *period-composer-instrumentation* condition (112 combinations, e.g. `Romantic_Ravel,
+Maurice_Chamber`), the result comes back as MusicXML and becomes a Version (provenance `externo`, author
+`NotaGen-X`). Gemini only plans: it picks the condition and the number of bars. No tokens are spent on the notes.
+
+**What it does not do.** Its style is Baroque to Romantic: no extended techniques, no microtones. That gestural
+language is still useful for a lot of contemporary music, and the plan can chain the catalog transformations after
+it (transpose, density, register, dynamics, techniques...) to move the material elsewhere.
+
+**Off by default.** Without it Muschat works exactly as before; with `MUSCHAT_NOTAGEN=1` but something missing, the
+sidebar (*Motores e bibliotecas*) says what is missing and the plan never offers it.
+
+Requirements: an NVIDIA GPU with **8 GB** or more (tested on an RTX 4060 8 GB, Windows 11), ~10 GB of disk.
+NotaGen needs its own Python environment (Python 3.10, torch 2.3, numpy 1.x), incompatible with Muschat's, so it
+runs as a separate process and is never a dependency of this project. Install it under `.muschat/notagen/`
+(gitignored), with `uv`:
+
+```powershell
+git clone --depth 1 https://github.com/ElectricAlexis/NotaGen.git .muschat/notagen/NotaGen
+uv venv --python 3.10 .muschat/notagen/venv
+uv pip install --python .muschat/notagen/venv/Scripts/python.exe torch==2.3.0 --index-url https://download.pytorch.org/whl/cu121
+uv pip install --python .muschat/notagen/venv/Scripts/python.exe transformers==4.40.0 numpy==1.26.4 abctoolkit==0.0.6 samplings==0.1.7 pyparsing==3.2.1 accelerate
+curl -L -o .muschat/notagen/NotaGen/gradio/weights_notagenx_p_size_16_p_length_1024_p_layers_20_h_size_1280.pth https://huggingface.co/ElectricAlexis/NotaGen/resolve/main/weights_notagenx_p_size_16_p_length_1024_p_layers_20_h_size_1280.pth
+```
+
+Then in `.env`:
+
+```dotenv
+MUSCHAT_NOTAGEN=1
+# only if you installed elsewhere (defaults shown; on Linux/macOS the python is venv/bin/python)
+# NOTAGEN_PYTHON=.muschat/notagen/venv/Scripts/python.exe
+# NOTAGEN_DIR=.muschat/notagen/NotaGen
+```
+
+Set `MUSCHAT_NOTAGEN=0` (or remove it) to turn it off. Each generation loads the model (~6 GB of weights) and
+takes about 35 s for 4 bars and 1 min for 16 bars on the RTX 4060; the plan caps a call at 16 bars. Reapplying a
+Version reuses the stored MusicXML unless you change the number of bars. Ask, for example: *"oito compassos de
+quarteto de cordas à maneira de Fauré, depois desloque o registro uma oitava acima"*.
+
 Without an index the chat still works and says it is answering from general knowledge.
 
 `.env`:
@@ -375,12 +417,15 @@ muschat/orquestrador.py   composition turn: plan -> router -> list of steps (pau
 muschat/registro.py       capability registry: what each engine/library/engraver can do on this machine, and how
 muschat/roteador.py       explicit, ordered routing rules (docs/adr/0002-regras-do-roteador.md)
 muschat/openmusic.py      OpenMusic bridge (assisted): install detection, task, output import
+muschat/notagen.py        NotaGen bridge (optional): install detection, Compositor run as a separate process
+servicos/notagen_gerar.py runs inside NotaGen's own environment: N bars -> ABC -> MusicXML
 muschat/patches_om.py     approved patches: entrada.txt per patch, saida.txt -> MusicIR, Csound rendering
 patches/                  the project's Lisp patches loaded in OpenMusic (Esquisse, Chaos, Situation, OMChroma)
 muschat/composicao.py     session composition: versions, undo, go back, compare, JSON save/open
 muschat/exportacao.py     MIDI writer, experiment JSON, export zip, descriptive metrics, loss notes per format
 muschat/notacao/          example schema -> MusicIR, extended-technique table by instrument family, MusicXML
-                          builder, Verovio renderer
+                          builder and reader (open .musicxml/.mxl as a Version), Verovio renderer
+muschat/referencias.py    fixed reference pieces for before/after listening (`python -m muschat.referencias <label>`)
 tests/                    pytest suite
 ```
 
@@ -389,6 +434,7 @@ tests/                    pytest suite
 Muschat depends on [Abjad](https://github.com/Abjad/abjad), which is GPL-3.0, so a distributed copy of Muschat is a
 combined work under GPL-3.0. LilyPond (GPL-3.0) is an external program the user installs; it is called as a process
 and never shipped with the project. OpenMusic and its libraries (GPL-3.0 or their own licenses; SuperVP has a
-separate IRCAM license) are optional external applications and are not shipped either; `patches/serie_harmonica.lisp`
+separate IRCAM license) are optional external applications and are not shipped either; NotaGen (MIT) and its
+weights are optional, installed by the user and run as a separate process; `patches/serie_harmonica.lisp`
 is written by this project and only calls Esquisse's public `harm-series`. The license report is in
 `docs/pesquisa/openmusic.md`.

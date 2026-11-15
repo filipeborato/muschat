@@ -38,7 +38,7 @@ class Procedimento:
     nome: str
     descricao: str
     parametros: dict[str, Faixa]
-    funcao: Funcao | None  # None: só existe como patch aprovado do OpenMusic (muschat.patches_om)
+    funcao: Funcao | None  # None: só existe em motor externo (patch aprovado do OpenMusic, ou o NotaGen)
     requer_composicao: bool = True
 
 
@@ -117,6 +117,14 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
                  {"alturas_por_quadro": Faixa(1, 8, 4, "quantos parciais mais fortes por quadro"),
                   "microtom": Faixa(0, 2, 1, "aproximação: 0 semitom, 1 quarto de tom, 2 oitavo de tom")},
                  eventos_do_espectro),
+    # --- só no NotaGen (modelo local opcional; o Python não executa) ---
+    Procedimento("gerar_notagen", "Só no NotaGen (modelo local): cria uma peça nova com frases, ritmo e "
+                 "articulação de música de câmara, a partir de uma condição período-compositor-instrumentação "
+                 "(campo condicao da operação: o texto exato de uma das listadas, a mais próxima do pedido, formação e "
+                 "período primeiro). Estilo barroco a romântico, sem técnicas estendidas: para outra estética, "
+                 "encadeie depois as transformações do catálogo e diga em hipoteses o que cada uma faz.",
+                 {"compassos": Faixa(1, 16, 8, "número de compassos (cada um leva alguns segundos na GPU)")},
+                 None, requer_composicao=False),
     # --- só no OpenMusic (patches aprovados; o Python não executa) ---
     Procedimento("densidade_caotica", "Só no OpenMusic (Chaos): o mapa logístico de Verhulst dá um valor por "
                  "compasso da seleção, normalizado e usado como densidade de ataques entre mínimo e máximo.",

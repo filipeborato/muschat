@@ -15,6 +15,7 @@ from muschat.musicir import MusicIR
 from muschat.notacao.lilypond import para_lilypond
 from muschat.notacao.musicxml import para_musicxml
 from muschat.notacao.tecnicas import TECNICAS
+from muschat.notagen import Compositor
 from muschat.orquestrador import compor
 from muschat.registro import Registro
 from muschat.roteador import Modo
@@ -119,6 +120,7 @@ def responder(
     composicao: Composicao | None = None,
     modo: Modo = "automatico",
     registro: Registro | None = None,
+    compositor: Compositor | None = None,
 ) -> Resposta:
     pergunta_segura = _neutralizar(pergunta)
 
@@ -131,7 +133,7 @@ def responder(
     if analise.notacao == "compor":
         composicao = composicao if composicao is not None else Composicao()  # sem sessão: vale só para este turno
         resultado = compor(pergunta_segura, composicao, gerador=gerador, chat=chat, modelo=modelo, modo=modo,
-                           registro=registro)
+                           registro=registro, compositor=compositor)
         operacao = resultado.resumo
         partituras = [exemplo_da_versao(resultado.versao)] if resultado.versao else []
     else:

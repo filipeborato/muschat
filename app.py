@@ -28,6 +28,7 @@ from muschat.rag.busca import abrir_retriever
 from muschat.rag.indice import GeminiEmbedder
 from muschat.reasoning import exemplo_da_versao, responder
 from muschat.registro import NOME_DO_MOTOR, ROTULO_DO_ESTADO, Registro
+from muschat.notagen import InstalacaoNotaGen, NotaGenLocal, detectar_notagen
 from muschat.registro import detectar as detectar_registro
 from muschat.roteador import MODOS
 from muschat.openmusic import detectar_openmusic
@@ -96,6 +97,16 @@ def _lilypond(configurado: str | None) -> Lilypond | None:
     return detectar(configurado)
 
 
+@st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar os pesos aparece em até 5 min
+def _notagen() -> InstalacaoNotaGen | str | None:
+    """None = desligado (MUSCHAT_NOTAGEN); texto = ligado mas indisponível, pelo motivo."""
+    return detectar_notagen(*cfg.notagen) if cfg.notagen else None
+
+
+def _compositor() -> NotaGenLocal | None:
+    return NotaGenLocal(n) if isinstance(n := _notagen(), InstalacaoNotaGen) else None
+
+
 @st.cache_resource(ttl=300, show_spinner=False)  # cache curto: instalar algo aparece em até 5 min
 def _registro(openmusic_ativo: bool = cfg.openmusic_ativo) -> Registro:
     try:
@@ -104,7 +115,7 @@ def _registro(openmusic_ativo: bool = cfg.openmusic_ativo) -> Registro:
         abjad_versao = None
     return detectar_registro(lilypond=_lilypond(os.environ.get("LILYPOND")),
                              openmusic=(detectar_openmusic(os.environ.get("OPENMUSIC")) if openmusic_ativo else None),
-                             abjad_versao=abjad_versao, openmusic_ativo=openmusic_ativo)
+                             abjad_versao=abjad_versao, openmusic_ativo=openmusic_ativo, notagen=_notagen())
 
 
 _ICONE = {"automatico": "🟢", "intercambio_arquivos": "🟡", "manual": "🟠", "indisponivel": "⚪"}
@@ -142,7 +153,7 @@ def _secao_pendente(c: Composicao):
         saida = st.file_uploader("saida.txt do OpenMusic", type=["txt"], key=f"saida-{p.tarefa.id}")
         if st.button("Importar e continuar", disabled=saida is None, width="stretch", type="primary"):
             assert saida is not None
-            resultado = retomar(c, saida.getvalue())
+            resultado = retomar(c, saida.getvalue(), compositor=_compositor())
             if resultado.versao:
                 st.session_state.messages.append({"role": "assistant", "content": resultado.resumo,
                                                   "partituras": [asdict(exemplo_da_versao(resultado.versao))]})
@@ -281,7 +292,7 @@ def _ajustar(c: Composicao):
                 max_value=float(faixas[p].maximo), value=float(v), step=1.0 if faixas[p].inteiro else 0.05,
                 key=f"ajuste-{c.indice}-{k}-{p}")) for p, v in params.items()})
         if st.button("Reaplicar", width="stretch", key=f"reaplicar-{c.indice}"):
-            resultado = reaplicar(c, novos, registro=_registro())
+            resultado = reaplicar(c, novos, registro=_registro(), compositor=_compositor())
             (st.toast if resultado.versao else st.error)(resultado.resumo)
             if resultado.versao:
                 st.rerun()
@@ -371,6 +382,7 @@ if pergunta := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                     composicao=st.session_state.composicao,
                     modo=st.session_state.modo,
                     registro=_registro(),
+                    compositor=_compositor(),
                 )
         except Exception as exc:
             if (erro := mensagem_de_erro(exc)) is None:

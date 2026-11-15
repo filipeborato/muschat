@@ -15,6 +15,7 @@ class Parametro(BaseModel):
 class Operacao(BaseModel):
     procedimento: str = Field(description="Nome de um procedimento do catálogo.")
     parametros: list[Parametro] = Field(default_factory=list, description="Ausente = valor padrão do catálogo.")
+    condicao: str = Field(default="", description="Só para gerar_notagen: uma das condições listadas no catálogo.")
 
 
 class Selecao(BaseModel):

@@ -19,8 +19,9 @@ from pydantic import ValidationError
 
 from muschat import prompts
 from muschat.composicao import Composicao, Pendencia, Versao
-from muschat.instrumentos import FAMILIAS, INSTRUMENTOS
-from muschat.musicir import MusicIR, Origem, Proveniencia, comparar, localizar
+from muschat.instrumentos import FAMILIAS, INSTRUMENTOS, instrumento
+from muschat.musicir import MusicIR, Origem, Parte, Proveniencia, comparar, localizar
+from muschat.notagen import Compositor
 from muschat.notacao.musicxml import de_musicxml, para_musicxml
 from muschat.notacao.tecnicas import tecnicas_da_familia
 from muschat.openmusic import PASTA_TAREFAS, Tarefa, criar_tarefa, importar
@@ -28,7 +29,7 @@ from muschat.plano import Operacao, Parametro, Plano
 from muschat.procedimentos import CATALOGO, Procedimento
 from muschat.registro import NOME_DO_MOTOR, Registro
 from muschat.restricoes import verificar
-from muschat.roteador import MODOS, Modo, SemRota, rotear
+from muschat.roteador import MODOS, Etapa, Modo, SemRota, rotear
 from muschat.seguranca import neutralizar
 
 if TYPE_CHECKING:
@@ -57,6 +58,7 @@ def compor(
     registro: Registro | None = None,
     catalogo: dict[str, Procedimento] = CATALOGO,
     pasta_tarefas: Path = PASTA_TAREFAS,
+    compositor: Compositor | None = None,
 ) -> Resultado:
     registro = registro or Registro.so_python(_nativos(catalogo))
     if composicao.pendente:
@@ -68,11 +70,12 @@ def compor(
     except Recusa as exc:
         return _recusa(exc)
     return _aplicar(plano, composicao, composicao.indice, pedido=pedido, modelo=modelo, modo=modo,
-                    registro=registro, catalogo=catalogo, pasta=pasta_tarefas)
+                    registro=registro, catalogo=catalogo, pasta=pasta_tarefas, compositor=compositor)
 
 
 def reaplicar(composicao: Composicao, parametros: list[dict[str, float]], *, registro: Registro | None = None,
-              catalogo: dict[str, Procedimento] = CATALOGO, pasta_tarefas: Path = PASTA_TAREFAS) -> Resultado:
+              catalogo: dict[str, Procedimento] = CATALOGO, pasta_tarefas: Path = PASTA_TAREFAS,
+              compositor: Compositor | None = None) -> Resultado:
     """Refaz a operação da Versão atual, a partir da mesma Versão de origem, com a mesma semente e o mesmo modo,
     trocando só os parâmetros (o compositor ajustou a hipótese operacional). Não chama o modelo."""
     versao = composicao.atual
@@ -86,14 +89,17 @@ def reaplicar(composicao: Composicao, parametros: list[dict[str, float]], *, reg
     plano = plano.model_copy(update={"semente": versao.experimento["semente"], "operacoes": [
         op.model_copy(update={"parametros": [Parametro(nome=k, valor=v) for k, v in novos.items()]})
         for op, novos in zip(plano.operacoes, parametros, strict=True)]})
+    # saída do NotaGen com os mesmos parâmetros é reusada (o modelo não reproduz por semente com garantia)
+    reuso = {int(k): xml for k, xml in versao.experimento.get("saidas_externas", {}).items()
+             if parametros[int(k)] == versao.experimento["parametros"][int(k)]}
     return _aplicar(plano, composicao, versao.anterior, pedido=f"{versao.experimento['pedido']} (reaplicado)",
                     modelo=versao.experimento["modelo"], modo=versao.experimento.get("modo", "automatico"),
                     registro=registro or Registro.so_python(_nativos(catalogo)), catalogo=catalogo,
-                    pasta=pasta_tarefas)
+                    pasta=pasta_tarefas, compositor=compositor, reuso=reuso)
 
 
 def retomar(composicao: Composicao, saida: bytes | str, *, catalogo: dict[str, Procedimento] = CATALOGO,
-            pasta_tarefas: Path = PASTA_TAREFAS) -> Resultado:
+            pasta_tarefas: Path = PASTA_TAREFAS, compositor: Compositor | None = None) -> Resultado:
     """Importa a saída da etapa do OpenMusic que espera o compositor e segue a lista de etapas dali."""
     p = composicao.pendente
     if p is None or p.tarefa is None:
@@ -109,7 +115,7 @@ def retomar(composicao: Composicao, saida: bytes | str, *, catalogo: dict[str, P
         nova = _conferir(p.plano, p.atual, material, origem="openmusic", operacao=p.operacao)
         contexto = p.model_copy(update={"etapa": p.etapa + 1, "tarefa": None,
                                         "intermediarios": [*p.intermediarios, nova]})
-        return _seguir(contexto, nova, composicao, catalogo, pasta_tarefas)
+        return _seguir(contexto, nova, composicao, catalogo, pasta_tarefas, compositor)
     except Recusa as exc:
         return _recusa(exc)
 
@@ -157,7 +163,8 @@ def _aguardando(p: Pendencia) -> Resultado:
 
 
 def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: str, modelo: str, modo: Modo,
-             registro: Registro, catalogo: dict[str, Procedimento], pasta: Path) -> Resultado:
+             registro: Registro, catalogo: dict[str, Procedimento], pasta: Path, compositor: Compositor | None,
+             reuso: dict[int, str] | None = None) -> Resultado:
     atual = None if base is None else composicao.versoes[base].ir
     try:
         try:
@@ -169,20 +176,26 @@ def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: 
             parametros.append(_parametros(op, catalogo, existe))
             existe = existe or not catalogo[op.procedimento].requer_composicao
         _validar_selecao(plano, atual)
+        _validar_condicoes(plano, decisao.etapas, registro)
         contexto = Pendencia(
             pedido=pedido, modelo=modelo, plano=plano, decisao=decisao, parametros=parametros,
             semente=plano.semente if plano.semente is not None else random.randrange(2**31),
-            operacao=f"op{len(composicao.versoes) + 1}", base=base, etapa=0, atual=atual, intermediarios=[])
-        return _seguir(contexto, atual, composicao, catalogo, pasta)
+            operacao=f"op{len(composicao.versoes) + 1}", base=base, etapa=0, atual=atual, intermediarios=[],
+            saidas_externas=reuso or {})
+        return _seguir(contexto, atual, composicao, catalogo, pasta, compositor)
     except Recusa as exc:
         return _recusa(exc)
 
 
 def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catalogo: dict[str, Procedimento],
-            pasta: Path) -> Resultado:
+            pasta: Path, compositor: Compositor | None) -> Resultado:
     intermediarios = list(ctx.intermediarios)
     for k in range(ctx.etapa, len(ctx.decisao.etapas)):
         etapa = ctx.decisao.etapas[k]
+        if etapa.motor == "notagen":
+            atual, ctx = _etapa_notagen(ctx, k, atual, compositor)
+            intermediarios.append(atual)
+            continue
         if etapa.motor == "openmusic":
             try:
                 tarefa = criar_tarefa(etapa.procedimento, ctx.parametros[k], raiz=pasta, atual=atual,
@@ -219,6 +232,7 @@ def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dic
               + "".join(f"; hipótese: {neutralizar(h)}" for h in plano.hipoteses)
               + (f"; restrições violadas ({len(violacoes)}): {'; '.join(violacoes[:5])}" if violacoes
                  else "; restrições cumpridas")
+              + (f"; descartado na leitura: {'; '.join(ctx.avisos)}" if ctx.avisos else "")
               + f". Escolha do motor: {' '.join(ctx.decisao.justificativa)}")
     versao = composicao.adicionar(nova, resumo, {
         "pedido": ctx.pedido, "modelo": ctx.modelo, "modo": ctx.decisao.modo, "plano": plano.model_dump(mode="json"),
@@ -227,6 +241,7 @@ def _gravar(ctx: Pendencia, nova: MusicIR, composicao: Composicao, catalogo: dic
         "semente": ctx.semente, "violacoes": violacoes, "dependencias": dependencias(),
         "etapas": [{**e.model_dump(), "estado": "feita"} for e in ctx.decisao.etapas],
         "intermediarios": [ir.model_dump(mode="json") for ir in ctx.intermediarios],
+        "saidas_externas": {str(k): xml for k, xml in ctx.saidas_externas.items()}, "avisos": ctx.avisos,
     }, anterior=ctx.base)
     return Resultado(resumo, versao)
 
@@ -257,6 +272,55 @@ def _conferir(plano: Plano, antes: MusicIR | None, nova: MusicIR, *, origem: Ori
         onde = fora or (f"compassos {dif.compassos}" if dif.compassos else "título/compositor")
         raise Recusa(f"o procedimento alterou material fora da seleção: {onde}.")
     return _carimbar(nova, set(dif.adicionados) | set(dif.alterados), origem, operacao)
+
+
+def _validar_condicoes(plano: Plano, etapas: list[Etapa], registro: Registro) -> None:
+    """Condição do NotaGen conferida contra as que ele aceita antes de rodar qualquer etapa."""
+    cap = registro.capacidade("NotaGen")
+    for op, etapa in zip(plano.operacoes, etapas):
+        if etapa.motor == "notagen" and (cap is None or op.condicao not in cap.opcoes):
+            raise Recusa(f"{op.procedimento}: condição {op.condicao!r} não é aceita pelo NotaGen-X.")
+
+
+def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
+                   compositor: Compositor | None) -> tuple[MusicIR, Pendencia]:
+    """Peça nova do NotaGen (ou a saída guardada, ao reaplicar), lida como MusicXML, com as partes renomeadas para
+    os instrumentos do plano quando a quantidade bate."""
+    op = ctx.plano.operacoes[k]
+    xml = ctx.saidas_externas.get(k)
+    if xml is None:
+        if compositor is None:
+            raise Recusa("o NotaGen não está ligado nesta sessão (MUSCHAT_NOTAGEN=1; ver README).")
+        try:
+            xml = compositor.gerar(op.condicao, int(ctx.parametros[k]["compassos"]),
+                                   random.Random(f"{ctx.semente}/{k}").randrange(2**31)).decode("utf-8")
+        except ValueError as exc:  # inclui UnicodeDecodeError
+            raise Recusa(f"etapa {k + 1} ({op.procedimento}): {_primeira_linha(exc)}") from exc
+    try:
+        ir, avisos = de_musicxml(xml.encode("utf-8"), Proveniencia(origem="externo", autor="NotaGen-X"))
+    except ValueError as exc:
+        raise Recusa(f"etapa {k + 1} ({op.procedimento}): saída ilegível: {_primeira_linha(exc)}") from exc
+    pedidos = int(ctx.parametros[k]["compassos"])
+    if len(ir.compassos) < pedidos:  # a peça do modelo acabou antes
+        avisos.append(f"o NotaGen escreveu {len(ir.compassos)} de {pedidos} compassos")
+    if len(ctx.plano.instrumentos) == len(ir.partes):
+        ir = ir.model_copy(update={"partes": [_com_instrumento(p, nome)
+                                              for p, nome in zip(ir.partes, ctx.plano.instrumentos)]})
+    elif ctx.plano.instrumentos:
+        avisos.append(f"o NotaGen escreveu {len(ir.partes)} partes para {len(ctx.plano.instrumentos)} instrumentos "
+                      "pedidos; ficam os nomes dele")
+    nova = _conferir(ctx.plano, atual, ir, origem="externo", operacao=ctx.operacao)
+    return nova, ctx.model_copy(update={"saidas_externas": {**ctx.saidas_externas, k: xml},
+                                        "avisos": [*ctx.avisos, *(neutralizar(a) for a in avisos)]})
+
+
+def _com_instrumento(parte: Parte, nome: str) -> Parte:
+    """A parte do NotaGen com o nome (e a tessitura, quando conhecida) do instrumento pedido no plano."""
+    try:
+        tessitura = instrumento(nome).tessitura
+    except ValueError:
+        tessitura = parte.tessitura
+    return parte.model_copy(update={"instrumento": nome.strip().capitalize(), "tessitura": tessitura})
 
 
 def _validar(nova: MusicIR) -> MusicIR:
@@ -377,6 +441,8 @@ def _catalogo_no_prompt(catalogo: dict[str, Procedimento], registro: Registro) -
             tipo = "inteiro" if f.inteiro else "real"
             linhas.append(f"    - {chave} ({tipo} {f.unidade}, {f.minimo:g} a {f.maximo:g}, padrão {f.padrao:g}): "
                           f"{f.descricao}")
+        if opcoes := [o for c in motores.values() for o in c.opcoes]:
+            linhas.append(f"    - condicao (texto exato, uma destas): {' | '.join(opcoes)}")
     return "\n".join(linhas)
 
 

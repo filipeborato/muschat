@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from muschat.notacao.lilypond import Lilypond
+from muschat.notagen import InstalacaoNotaGen
 from muschat.openmusic import PATCHES, InstalacaoOM, PatchAprovado
 from muschat.patches_om import csound
 from muschat.procedimentos import CATALOGO
@@ -18,9 +19,9 @@ from muschat.procedimentos import CATALOGO
 NATIVOS = tuple(n for n, p in CATALOGO.items() if p.funcao is not None)  # o que o motor Python executa
 
 Estado = Literal["indisponivel", "manual", "intercambio_arquivos", "automatico"]
-Motor = Literal["python", "openmusic"]
+Motor = Literal["python", "openmusic", "notagen"]
 PREFERENCIA: dict[Estado, int] = {"automatico": 0, "intercambio_arquivos": 1, "manual": 2, "indisponivel": 3}
-NOME_DO_MOTOR: dict[Motor, str] = {"python": "Python/Abjad", "openmusic": "OpenMusic"}
+NOME_DO_MOTOR: dict[Motor, str] = {"python": "Python/Abjad", "openmusic": "OpenMusic", "notagen": "NotaGen"}
 ROTULO_DO_ESTADO: dict[Estado, str] = {"automatico": "automático", "intercambio_arquivos": "intercâmbio de arquivos",
                                        "manual": "assistido", "indisponivel": "indisponível"}
 
@@ -37,6 +38,7 @@ class Capacidade:
     entradas: str = ""
     saidas: str = ""
     limitacoes: str = ""
+    opcoes: tuple[str, ...] = ()  # valores aceitos em `condicao` (NotaGen: período_compositor_instrumentação)
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,9 @@ class Registro:
         python = self.capacidade("Python")
         if python and procedimento in python.procedimentos:
             achadas["python"] = python
+        notagen = self.capacidade("NotaGen")
+        if notagen and procedimento in notagen.procedimentos:
+            achadas["notagen"] = notagen
         om = self.capacidade("OpenMusic")
         libs = [c for c in self.capacidades if c.tipo == "biblioteca" and procedimento in c.procedimentos]
         if om and libs:
@@ -90,7 +95,9 @@ _BIBLIOTECAS_OM = {
 
 def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad_versao: str | None = None,
              which: Callable[[str], str | None] = shutil.which,
-             patches: Mapping[str, PatchAprovado] = PATCHES, openmusic_ativo: bool = True) -> Registro:
+             patches: Mapping[str, PatchAprovado] = PATCHES, openmusic_ativo: bool = True,
+             notagen: InstalacaoNotaGen | str | None = None) -> Registro:
+    """`notagen`: None = integração desligada (não aparece); texto = ligada mas indisponível, pelo motivo."""
     caps = [_python(),
             Capacidade("Abjad", "gravacao", "automatico" if abjad_versao else "indisponivel",
                        "MusicIR -> texto LilyPond" if abjad_versao else "pacote abjad não importável",
@@ -101,6 +108,13 @@ def detectar(*, lilypond: Lilypond | None, openmusic: InstalacaoOM | None, abjad
                        versao=".".join(map(str, lilypond.versao)) if lilypond else None, saidas="PDF, SVG"),
             Capacidade("Verovio", "gravacao", "automatico", "MusicXML -> SVG, sempre disponível (reserva)",
                        saidas="SVG")]
+    if isinstance(notagen, InstalacaoNotaGen):
+        caps.append(Capacidade("NotaGen", "motor", "automatico", f"em {notagen.pasta}; gera frases e ritmo de "
+                               "música de câmara localmente (GPU), estilo barroco a romântico", versao="NotaGen-X",
+                               procedimentos=("gerar_notagen",), opcoes=notagen.condicoes,
+                               saidas="MusicXML", limitacoes="sem técnicas estendidas nem microtons"))
+    elif notagen is not None:
+        caps.append(Capacidade("NotaGen", "motor", "indisponivel", notagen, dependencias=("NotaGen-X", "GPU")))
     if not openmusic_ativo:
         return Registro(tuple(caps))
     if openmusic is None:

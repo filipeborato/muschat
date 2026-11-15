@@ -7,6 +7,8 @@ pedido do modelo não habilitam a integração. O roteador consulta apenas o Reg
 Seleção automática exige motor com estado `automatico`; uma rota exclusivamente assistida é recusada com
 orientação para escolha explícita. Pedidos que nomeiam OM continuam escolhas explícitas, sujeitos à ativação.
 
+Atualização 2026-11-15: motor opcional **NotaGen** (`MUSCHAT_NOTAGEN=1`). Ele declara só `gerar_notagen`, então R1 o escolhe sozinho; roda em estado `automatico` (processo local, sem intervenção). Modo manual Python/OpenMusic com `gerar_notagen` no plano recusa com a alternativa (R3); no Híbrido, a etapa que o OpenMusic não faz vai ao motor automático que a declara (Python ou NotaGen).
+
 ## Contexto
 
 O compositor escolhe um modo (Automático, Python/Abjad, OpenMusic, Híbrido) e o plano lista operações do catálogo.

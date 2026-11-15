@@ -72,7 +72,7 @@ def _escolher(procedimento: str, modo: Modo, registro: Registro) -> tuple[Motor,
     if modo == "hibrido" and "openmusic" in disponiveis:  # R4
         return "openmusic", (f"{procedimento}: OpenMusic, etapa do modo Híbrido "
                              f"({_estado(disponiveis['openmusic'].estado)}).")
-    if modo == "hibrido":
+    if modo == "hibrido" and "python" in disponiveis:
         return "python", f"{procedimento}: Python/Abjad, o OpenMusic não tem esse procedimento aqui (R4)."
     automaticos = {m: c for m, c in disponiveis.items() if c.estado == "automatico"}
     if not automaticos:
@@ -119,4 +119,4 @@ def _por_que_nao(procedimento: str, motor: Motor, registro: Registro) -> str:
 def _alternativas(disponiveis: dict) -> str:
     if not disponiveis:
         return "nenhum outro motor executa isso aqui."
-    return "; ".join(f"{MODOS[m]} ({_estado(c.estado)})" for m, c in disponiveis.items()) + "."
+    return "; ".join(f"{NOME_DO_MOTOR[m]} ({_estado(c.estado)})" for m, c in disponiveis.items()) + "."

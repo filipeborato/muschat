@@ -17,7 +17,7 @@ Dinamica = Literal["pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "ffff
 Clave = Literal["sol", "fa", "do3", "do4", "percussao"]
 Letra = Literal["C", "D", "E", "F", "G", "A", "B"]
 CLASSE_DA_LETRA: dict[str, int] = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-Origem = Literal["llm", "algoritmo", "openmusic", "acervo", "compositor"]
+Origem = Literal["llm", "algoritmo", "openmusic", "acervo", "compositor", "externo"]  # externo: NotaGen
 Id = Annotated[str, Field(pattern=r"^[A-Za-z_][\w.-]*$")]  # vale como ID de XML (MusicXML usa o id da parte)
 Posicao = Annotated[Fraction, Field(ge=0)]
 Duracao = Annotated[Fraction, Field(gt=0)]

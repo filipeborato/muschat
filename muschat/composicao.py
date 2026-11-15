@@ -42,6 +42,8 @@ class Pendencia(BaseModel):
     atual: MusicIR | None  # MusicIR antes da etapa que espera
     intermediarios: list[MusicIR]
     tarefa: Tarefa | None = None  # preenchida quando a lista pausa numa etapa do OpenMusic
+    saidas_externas: dict[int, str] = {}  # etapa -> MusicXML gerado pelo NotaGen (reaplicar reusa)
+    avisos: list[str] = []  # o que a leitura de uma saída externa descartou
 
 
 class Composicao:
