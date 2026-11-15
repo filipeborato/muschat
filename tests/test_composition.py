@@ -405,3 +405,51 @@ def test_expanded_recipe_reapply_preserves_operations_and_score(monkeypatch):
     assert result.version is not None, result.summary
     assert [o.procedure for o in result.version.experiment.plan.operations] == [o.procedure for o in original.experiment.plan.operations]
     assert result.version.ir.model_dump_json().replace("op2", "op1") == original.ir.model_dump_json()
+
+
+def test_composition_survives_score_schema_reload():
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent("""
+        import importlib
+        import muschat.score_ir as score_ir
+        import muschat.composition as composition
+        import muschat.orchestrator as orchestrator
+        import muschat.preservation as preservation
+        import muschat.execution as execution
+        from tests.test_composition import _quartet, _plan, FakeGenerator, FakeChat
+        c = _quartet()
+        original = c.to_json()
+        importlib.reload(score_ir)
+        importlib.reload(composition)
+        import muschat.procedures.common as common
+        import muschat.procedures.melodic as melodic
+        importlib.reload(common)
+        importlib.reload(melodic)
+        importlib.reload(preservation)
+        importlib.reload(execution)
+        importlib.reload(orchestrator)
+        result = orchestrator.compose('transpose', c, generator=FakeGenerator(_plan('transpose', {'interval': 50})), chat=FakeChat(), model='m')
+        assert result.version is not None, result.summary
+        assert len(c.versions) == 2
+        before = c.versions[0].ir.parts[0].voices[0].events[0].pitches[0].midicents
+        after = c.current.ir.parts[0].voices[0].events[0].pitches[0].midicents
+        assert after == before + 50
+        restored = composition.Composition.from_json(original)
+        assert c.versions[0].ir.model_dump(mode='json') == restored.current.ir.model_dump(mode='json')
+    """)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_retained_dictionary_experiments_are_restored_without_losing_history():
+    from muschat.composition import Experiment
+
+    c = _quartet()
+    original = c.to_json()
+    object.__setattr__(c.current, "experiment", c.current.experiment.model_dump(mode="json"))
+    Composition.refresh_schema(c)
+    assert isinstance(c.current.experiment, Experiment)
+    assert c.to_json() == original and c.current.reapplicable

@@ -34,6 +34,8 @@ def _trim_abc_measures(abc_text: str, max_measures: int) -> str:
 def main() -> None:
     notagen_dir, condition, measures_str, seed_str, output_path = sys.argv[1:6]
     measures, seed = int(measures_str), int(seed_str)
+    notagen_dir = str(Path(notagen_dir).resolve())
+    output_path = str(Path(output_path).resolve())
     gradio_dir = Path(notagen_dir) / "gradio"
     os.chdir(gradio_dir)
     sys.path.insert(0, str(gradio_dir))

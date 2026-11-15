@@ -389,6 +389,23 @@ class Composition:
         self.index: int | None = None
         self.pending: PendingTask | None = None
 
+    def refresh_schema(self) -> None:
+        """Restore retained session objects after a module reload without losing history."""
+        stale_versions = any(
+            type(v) is not Version or type(v.ir) is not ScoreIR or type(v.experiment) is not Experiment
+            for v in self.versions
+        )
+        stale_pending = self.pending is not None and (
+            type(self.pending) is not PendingTask
+            or (self.pending.current is not None and type(self.pending.current) is not ScoreIR)
+        )
+        if stale_versions or stale_pending:
+            try:
+                restored = Composition.from_json(self.to_json())
+            except (AttributeError, TypeError) as exc:
+                raise ValueError("Retained composition could not be migrated; its original history was preserved") from exc
+            self.versions, self.index, self.pending = restored.versions, restored.index, restored.pending
+
     @property
     def current(self) -> Version | None:
         return None if self.index is None else self.versions[self.index]
@@ -419,7 +436,9 @@ class Composition:
                     {
                         "ir": v.ir.model_dump(mode="json"),
                         "summary": v.summary,
-                        "experiment": v.experiment.model_dump(mode="json"),
+                        "experiment": (
+                            v.experiment if isinstance(v.experiment, dict) else v.experiment.model_dump(mode="json")
+                        ),
                         "previous": v.previous,
                         "created_at": v.created_at.isoformat(),
                     }

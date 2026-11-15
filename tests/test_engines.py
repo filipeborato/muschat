@@ -229,8 +229,10 @@ def test_hybrid_replans_once_when_model_omits_om_step(tmp_path):
     assert resume(c, OUTPUT_16).version
     g, c = FakeGenerator(bad, bad), Composition()
     r = compose("compose", c, generator=g, chat=FakeChat(), model="m", mode="hybrid", registry=WITH_OM)
-    assert not r.task and not r.version and not c.pending
-    assert "after correction" in r.summary and len(g.calls) == 2
+    assert r.task and not r.version and c.pending
+    assert "repaired missing generation" in c.pending.plan.hypotheses[-1]
+    assert len(g.calls) == 2
+    assert resume(c, OUTPUT_16).version is not None
 
 
 def test_chat_imports_pending_output_without_reinterpreting_as_hz(tmp_path):
@@ -409,3 +411,46 @@ def test_discard_deletes_task_directory(tmp_path):
     c, r, _ = _om(tmp_path)
     discard_task(c)
     assert r.task is not None and not Path(r.task.directory).exists() and c.pending is None
+
+
+def test_hybrid_correction_receives_failed_plan_and_required_procedures(tmp_path):
+    from muschat.score_ir import Note
+    bad = _plan("apply_techniques", instruments=["flute", "cello"])
+    good = _plan(instruments=["flute", "cello"])
+    good["techniques"] = ["frullato"]
+    generator = FakeGenerator(bad, good)
+    comp = Composition()
+    result = compose("create notes with extended techniques", comp, generator=generator, chat=FakeChat(), model="m", mode="hybrid", registry=WITH_OM, tasks_dir=tmp_path)
+    assert result.task is not None, result.summary
+    correction = generator.calls[1].contents[-1].parts[0].text
+    assert "<previous_plan>" in correction and "apply_techniques" in correction
+    assert "<required_procedures>" in correction and "harmonic_series" in correction
+    result = resume(comp, OUTPUT_16)
+    assert result.version is not None, result.summary
+    assert any(e.techniques for _, _, e in result.version.ir.events() if isinstance(e, Note))
+
+
+def test_hybrid_repair_never_replaces_existing_piece(tmp_path):
+    from tests.test_composition import _quartet
+
+    comp = _quartet()
+    before = comp.to_json()
+    bad = _plan("transpose", {"interval": 50})
+    generator = FakeGenerator(bad, bad)
+    result = compose("edit this piece", comp, generator=generator, chat=FakeChat(), model="m", mode="hybrid", registry=WITH_OM, tasks_dir=tmp_path)
+    assert result.version is None and result.task is None
+    assert "after correction" in result.summary
+    assert comp.to_json() == before and len(generator.calls) == 2
+
+
+def test_hybrid_repair_preserves_request_fields_and_transformations(tmp_path):
+    initial = _plan("apply_techniques", instruments=["flute", "cello"])
+    initial["techniques"] = ["frullato"]
+    retry = _plan("transpose", {"interval": 50}, instruments=[])
+    comp = Composition()
+    result = compose("notes and extended techniques", comp, generator=FakeGenerator(initial, retry), chat=FakeChat(), model="m", mode="hybrid", registry=WITH_OM, tasks_dir=tmp_path)
+    assert result.task is not None, result.summary
+    plan = comp.pending.plan
+    assert plan.instruments == ["flute", "cello"] and plan.techniques == ["frullato"]
+    assert "apply_techniques" in [op.procedure for op in plan.operations]
+    assert resume(comp, OUTPUT_16).version is not None

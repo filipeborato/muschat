@@ -359,3 +359,21 @@ def test_notagen_planner_retries_missing_generation_once(tmp_path):
     assert result.version is not None, result.summary
     assert len(generator.calls) == 2 and len(fake.calls) == 1
     assert "CORRECTION" in generator.calls[1].config.system_instruction
+
+
+@pytest.mark.parametrize("relative", [True, False])
+def test_local_notagen_resolves_paths_before_changing_working_directory(tmp_path, monkeypatch, relative):
+    import os
+    import muschat.notagen as notagen
+
+    installation_dir = tmp_path / "model with spaces"
+    gradio = installation_dir / "gradio"
+    gradio.mkdir(parents=True)
+    runner = tmp_path / "fake runner.py"
+    runner.write_text("import os, sys\nfrom pathlib import Path\nroot = Path(sys.argv[1])\nos.chdir(root / 'gradio')\nassert (root / 'gradio').is_dir()\nPath(sys.argv[5]).write_bytes(b'<score/>')\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(notagen, "SCRIPT_PATH", runner)
+    directory = os.path.relpath(installation_dir, tmp_path) if relative else str(installation_dir)
+    python = os.path.relpath(sys.executable, tmp_path) if relative else sys.executable
+    backend = LocalNotaGen(NotaGenInstallation(python, directory, ("A_B_C",)))
+    assert backend.generate("A_B_C", 1, 1) == b"<score/>"

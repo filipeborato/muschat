@@ -145,7 +145,7 @@ runs as a separate process and is never a dependency of this project. Install it
 git clone --depth 1 https://github.com/ElectricAlexis/NotaGen.git .muschat/notagen/NotaGen
 uv venv --python 3.10 .muschat/notagen/venv
 uv pip install --python .muschat/notagen/venv/Scripts/python.exe torch==2.3.0 --index-url https://download.pytorch.org/whl/cu121
-uv pip install --python .muschat/notagen/venv/Scripts/python.exe transformers==4.40.0 numpy==1.26.4 abctoolkit==0.0.6 samplings==0.1.7 pyparsing==3.2.1 accelerate
+uv pip install --python .muschat/notagen/venv/Scripts/python.exe transformers==4.40.0 numpy==1.26.4 abctoolkit==0.0.6 samplings==0.1.7 pyparsing==3.2.1 accelerate music21
 curl -L -o .muschat/notagen/NotaGen/gradio/weights_notagenx_p_size_16_p_length_1024_p_layers_20_h_size_1280.pth https://huggingface.co/ElectricAlexis/NotaGen/resolve/main/weights_notagenx_p_size_16_p_length_1024_p_layers_20_h_size_1280.pth
 ```
 

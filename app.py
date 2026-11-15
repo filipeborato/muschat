@@ -92,6 +92,15 @@ def _new_conversation():
 
 if "chat" not in st.session_state or "composition" not in st.session_state:
     _new_conversation()
+else:
+    try:
+        Composition.refresh_schema(st.session_state.composition)
+    except ValueError:
+        st.error(
+            "Não foi possível atualizar esta composição após recarregar o aplicativo. "
+            "O histórico foi preservado; reinicie o aplicativo para tentar novamente."
+        )
+        st.stop()
 
 st.sidebar.button("Nova conversa", on_click=_new_conversation, width="stretch")
 

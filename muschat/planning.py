@@ -1,19 +1,23 @@
 """Structured composition planning, mode retry policy, and plan normalization."""
 
+import logging
 from typing import TYPE_CHECKING
 from google.genai import types
 from pydantic import ValidationError
 from muschat import prompts
 from muschat.errors import RefusalError
 from muschat.instruments import FAMILIES, INSTRUMENTS
-from muschat.notation.techniques import family_techniques
+from muschat.notation.techniques import TECHNIQUES, family_techniques, fits_instrument
 from muschat.plan import Operation, Parameter, Plan
 from muschat.procedures import Procedure
+from muschat.procedures.common import DEFAULT_QUARTET
 from muschat.recipes import documentation as recipes_in_prompt, expand_recipe
 from muschat.registry import Registry
 from muschat.router import Mode, Step, effective_mode
 from muschat.score_ir import Note, ScoreIR
 from muschat.security import sanitize
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from muschat.reasoning import ChatSession, Generator
@@ -31,12 +35,18 @@ def plan_composition(
     mode: Mode = "auto",
     sections: list | None = None,
     retrying_route: bool = False,
+    previous_plan: Plan | None = None,
+    required_procedures: tuple[str, ...] = (),
 ) -> Plan:
     text = (
         f"<user_question>\n{sanitize(request)}\n</user_question>\n"
         f"<sections>{sanitize(str(sections or []))}</sections>\n"
         f"<current_composition>\n{summarize_score(current)}\n</current_composition>"
     )
+    if previous_plan is not None:
+        text += f"\n<previous_plan>{sanitize(previous_plan.model_dump_json())}</previous_plan>"
+        text += f"\n<required_procedures>{', '.join(required_procedures)}</required_procedures>"
+        text += "\nThe previous plan omitted every required procedure. Include at least one listed procedure, then retain the requested instrumentation and transformations."
     response = generator.generate_content(
         model=model,
         contents=[
@@ -89,6 +99,15 @@ def plan_composition(
     )
     try:
         plan = Plan.model_validate_json(response.text or "")
+        if previous_plan is not None:
+            preserved = {
+                name: getattr(previous_plan, name)
+                for name in ("instruments", "techniques", "constraints", "sections")
+                if not getattr(plan, name)
+            }
+            if plan.selection.is_full and not previous_plan.selection.is_full:
+                preserved["selection"] = previous_plan.selection
+            plan = Plan.model_validate({**plan.model_dump(), **preserved})
         if sections and not plan.sections:
             plan = Plan.model_validate({**plan.model_dump(), "sections": sections})
         effective = effective_mode(plan, mode)
@@ -103,7 +122,81 @@ def plan_composition(
             if effective == "notagen":
                 approved = {"generate_notagen"}
             if approved and not any(op.procedure in approved for op in plan.operations):
+                logger.warning(
+                    "Planner omitted required engine: mode=%s operations=%s required=%s retry=%s",
+                    effective,
+                    [op.procedure for op in plan.operations],
+                    sorted(approved),
+                    retrying_route,
+                )
                 if retrying_route:
+                    if (
+                        effective in ("openmusic", "hybrid")
+                        and current is None
+                        and not plan.sections
+                        and plan.selection.is_full
+                        and "harmonic_series" in approved
+                        and all(
+                            op.procedure in catalog
+                            and catalog[op.procedure].requires_score
+                            for op in plan.operations
+                        )
+                    ):
+                        # Repair only new pieces: inserting a generator into an edit would replace existing music.
+                        operations = list(plan.operations)
+                        if previous_plan is not None:
+                            operations = [
+                                op
+                                for op in previous_plan.operations
+                                if not any(
+                                    (op.procedure, op.section)
+                                    == (new.procedure, new.section)
+                                    for new in operations
+                                )
+                            ] + operations
+                        if any(
+                            op.procedure not in catalog
+                            or not catalog[op.procedure].requires_score
+                            for op in operations
+                        ):
+                            raise RefusalError(
+                                "Cannot safely repair a plan containing another material generator"
+                            )
+                        instruments = plan.instruments or list(DEFAULT_QUARTET)
+                        techniques = list(plan.techniques)
+                        if not techniques and any(
+                            op.procedure in ("apply_techniques", "gestural_techniques")
+                            for op in operations
+                        ):
+                            for instrument in instruments:
+                                for name, technique in TECHNIQUES.items():
+                                    if (
+                                        fits_instrument(name, instrument)
+                                        and technique.register == (0.0, 1.0)
+                                        and technique.min_duration == 0
+                                    ):
+                                        if name not in techniques:
+                                            techniques.append(name)
+                                        break
+                                else:
+                                    raise RefusalError(
+                                        f"No idiomatic extended technique is available for {instrument}"
+                                    )
+                        return Plan.model_validate(
+                            {
+                                **plan.model_dump(),
+                                "instruments": instruments,
+                                "techniques": techniques,
+                                "operations": [
+                                    Operation(procedure="harmonic_series").model_dump(),
+                                    *[op.model_dump() for op in operations],
+                                ],
+                                "hypotheses": [
+                                    *plan.hypotheses,
+                                    "repaired missing generation: OpenMusic harmonic series supplies the new instrumental piece",
+                                ],
+                            }
+                        )
                     raise RefusalError(
                         f"planning did not include a required {effective} step even after correction; no engine was executed"
                     )
@@ -118,6 +211,8 @@ def plan_composition(
                     mode=effective,
                     sections=sections,
                     retrying_route=True,
+                    previous_plan=plan,
+                    required_procedures=tuple(sorted(approved)),
                 )
                 return corrected.model_copy(update={"mode": effective})
         return plan

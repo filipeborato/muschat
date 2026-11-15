@@ -80,8 +80,9 @@ def compose(
     registry = registry or Registry.python_only(_native_procedures(catalog))
     if composition.pending:
         return _awaiting(composition.pending)
-    current = composition.current.ir if composition.current else None
     try:
+        Composition.refresh_schema(composition)
+        current = composition.current.ir if composition.current else None
         plan_sections = (
             composition.current.experiment.get("plan", {}).get("sections", [])
             if composition.current
@@ -98,7 +99,7 @@ def compose(
             mode=mode,
             sections=plan_sections,
         )
-    except RefusalError as exc:
+    except (RefusalError, ValueError) as exc:
         return _refusal(exc)
     return _apply_plan(
         plan,
@@ -186,6 +187,9 @@ def resume(
     if p is None or p.task is None:
         return _refusal(RefusalError("no OpenMusic step is awaiting output."))
     try:
+        Composition.refresh_schema(composition)
+        p = composition.pending
+        assert p is not None and p.task is not None
         validate_selection(p.plan.for_step(p.step), p.current, catalog)
         result = execute_step(
             p, p.step, p.current, catalog, tasks_dir, composer, output=output
@@ -195,7 +199,7 @@ def resume(
         return TurnResult(
             f"OpenMusic output was rejected and the task is still awaiting you: {exc}.",
             None,
-            p.task,
+            composition.pending.task if composition.pending else None,
         )
     composition.pending = None
     try:
@@ -210,7 +214,7 @@ def resume(
         return _continue_pipeline(
             ctx, result.ir, composition, catalog, tasks_dir, composer
         )
-    except RefusalError as exc:
+    except (RefusalError, ValueError) as exc:
         return _refusal(exc)
 
 
@@ -294,8 +298,9 @@ def _apply_plan(
     reuse: dict[int, str] | None = None,
     plan_expanded: bool = False,
 ) -> TurnResult:
-    current = None if base is None else composition.versions[base].ir
     try:
+        Composition.refresh_schema(composition)
+        current = None if base is None else composition.versions[base].ir
         plan = normalize_plan(plan, mode, catalog, current, plan_expanded=plan_expanded)
         try:
             decision = route(plan, mode, registry)
@@ -346,7 +351,7 @@ def _apply_plan(
         return _continue_pipeline(
             ctx, current, composition, catalog, tasks_dir, composer
         )
-    except RefusalError as exc:
+    except (RefusalError, ValueError) as exc:
         return _refusal(exc)
 
 
