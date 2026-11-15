@@ -1,17 +1,17 @@
-"""Configuração lida do ambiente, com fallback para os secrets do Streamlit."""
+"""Environment configuration loader with fallback to Streamlit secrets."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-MODELO_PADRAO = "gemini-3.1-flash-lite"
-MODELO_EMBEDDINGS_PADRAO = "gemini-embedding-2"
-# instalação sugerida no README (pasta ignorada pelo git); Windows. Em outro sistema, defina NOTAGEN_PYTHON.
-NOTAGEN_PYTHON_PADRAO = ".muschat/notagen/venv/Scripts/python.exe"
-NOTAGEN_DIR_PADRAO = ".muschat/notagen/NotaGen"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_EMBED_MODEL = "gemini-embedding-2"
+# Suggested installation path in README (gitignored folder on Windows); override via NOTAGEN_PYTHON on other platforms.
+DEFAULT_NOTAGEN_PYTHON = ".muschat/notagen/venv/Scripts/python.exe"
+DEFAULT_NOTAGEN_DIR = ".muschat/notagen/NotaGen"
 
 
-class ChaveAusente(Exception):
-    """GEMINI_API_KEY não foi configurada."""
+class MissingApiKeyError(Exception):
+    """Raised when GEMINI_API_KEY is not configured."""
 
 
 @dataclass(frozen=True)
@@ -19,24 +19,41 @@ class Config:
     api_key: str
     model: str
     embed_model: str
-    openmusic_ativo: bool = False
-    notagen: tuple[str, str] | None = None  # (python do ambiente do NotaGen, pasta do repositório); None = desligado
+    openmusic_enabled: bool = False
+    notagen: tuple[str, str] | None = None  # (NotaGen python executable, repo directory); None = disabled
+
+    # shortcut: legacy Portuguese attribute alias; remove in Phase 0 Contract (Ticket 03)
+    @property
+    def openmusic_ativo(self) -> bool:
+        return self.openmusic_enabled
 
 
-def _ler(nome: str, env: Mapping, secrets: Mapping) -> str:
-    return str(env.get(nome) or secrets.get(nome) or "").strip()
+def _read(name: str, env: Mapping, secrets: Mapping) -> str:
+    return str(env.get(name) or secrets.get(name) or "").strip()
 
 
-def carregar_config(env: Mapping, secrets: Mapping) -> Config:
-    api_key = _ler("GEMINI_API_KEY", env, secrets)
+def load_config(env: Mapping, secrets: Mapping) -> Config:
+    api_key = _read("GEMINI_API_KEY", env, secrets)
     if not api_key:
-        raise ChaveAusente("GEMINI_API_KEY não configurada.")
+        raise MissingApiKeyError("GEMINI_API_KEY is not configured.")
     return Config(
         api_key=api_key,
-        openmusic_ativo=_ler("MUSCHAT_OPENMUSIC", env, secrets) == "1",
-        model=_ler("GEMINI_MODEL", env, secrets) or MODELO_PADRAO,
-        embed_model=_ler("GEMINI_EMBED_MODEL", env, secrets) or MODELO_EMBEDDINGS_PADRAO,
-        notagen=(_ler("NOTAGEN_PYTHON", env, secrets) or NOTAGEN_PYTHON_PADRAO,
-                 _ler("NOTAGEN_DIR", env, secrets) or NOTAGEN_DIR_PADRAO)
-        if _ler("MUSCHAT_NOTAGEN", env, secrets) == "1" else None,
+        openmusic_enabled=_read("MUSCHAT_OPENMUSIC", env, secrets) == "1",
+        model=_read("GEMINI_MODEL", env, secrets) or DEFAULT_MODEL,
+        embed_model=_read("GEMINI_EMBED_MODEL", env, secrets) or DEFAULT_EMBED_MODEL,
+        notagen=(
+            _read("NOTAGEN_PYTHON", env, secrets) or DEFAULT_NOTAGEN_PYTHON,
+            _read("NOTAGEN_DIR", env, secrets) or DEFAULT_NOTAGEN_DIR,
+        )
+        if _read("MUSCHAT_NOTAGEN", env, secrets) == "1"
+        else None,
     )
+
+
+# shortcut: legacy aliases for unmigrated callers; remove in Phase 0 Contract (Ticket 03)
+MODELO_PADRAO = DEFAULT_MODEL
+MODELO_EMBEDDINGS_PADRAO = DEFAULT_EMBED_MODEL
+NOTAGEN_PYTHON_PADRAO = DEFAULT_NOTAGEN_PYTHON
+NOTAGEN_DIR_PADRAO = DEFAULT_NOTAGEN_DIR
+ChaveAusente = MissingApiKeyError
+carregar_config = load_config

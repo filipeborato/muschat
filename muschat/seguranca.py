@@ -1,11 +1,6 @@
-"""Neutralização de texto não confiável antes de ir para um prompt."""
+"""Compatibility shim for `muschat.security` during Phase 0 Expand."""
 
-import re
+# shortcut: compatibility shim for unmigrated callers; remove in Phase 0 Contract (Ticket 03)
+from muschat.security import sanitize as neutralizar
 
-_TAGS = re.compile(r"</?\s*(pergunta_usuario|analise_interna|trechos?|composicao_atual|operacao)\b[^>]*>",
-                   re.IGNORECASE)
-
-
-def neutralizar(texto: str) -> str:
-    """Remove nossas tags de delimitação de texto não confiável (prompt injection)."""
-    return _TAGS.sub("", texto)
+__all__ = ["neutralizar"]
