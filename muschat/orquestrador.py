@@ -360,8 +360,7 @@ def _validar_condicoes(plano: Plano, etapas: list[Etapa], registro: Registro) ->
 
 def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
                    compositor: Compositor | None) -> tuple[MusicIR, Pendencia]:
-    """Peça nova do NotaGen (ou a saída guardada, ao reaplicar), lida como MusicXML, com as partes renomeadas para
-    os instrumentos do plano quando a quantidade bate."""
+    """Lê a saída do NotaGen e exige a quantidade de partes solicitada antes de transformar ou gravar."""
     op = ctx.plano.operacoes[k]
     alvo = ctx.plano.para_etapa(k)
     pedidos = int(ctx.parametros[k]["compassos"])
@@ -384,8 +383,12 @@ def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
         ir = ir.model_copy(update={"partes": [_com_instrumento(p, nome)
                                               for p, nome in zip(ir.partes, ctx.plano.instrumentos)]})
     elif ctx.plano.instrumentos:
-        avisos.append(f"o NotaGen escreveu {len(ir.partes)} partes para {len(ctx.plano.instrumentos)} instrumentos "
-                      "pedidos; ficam os nomes dele")
+        recebidos = ", ".join(p.instrumento for p in ir.partes)
+        solicitados = ", ".join(ctx.plano.instrumentos)
+        raise Recusa(f"instrumentação incompatível: o NotaGen escreveu {len(ir.partes)} partes ({recebidos}) "
+                     f"para {len(ctx.plano.instrumentos)} instrumentos pedidos ({solicitados}). "
+                     "A saída não atende ao conjunto solicitado; nenhuma versão foi gravada. "
+                     "Gere novamente com uma condição compatível ou use Python/Abjad para o conjunto exato.")
     if op.secao:
         from muschat.secoes import inserir
         try:

@@ -116,6 +116,8 @@ INSTRUMENTOS: dict[str, Instrumento] = {
     "baixo": Instrumento("voz", "fa", (4000, 6400)),
 }
 _SINONIMOS = {
+    "violoncello": "violoncelo", "cello": "violoncelo", "violin ": "violino ",
+    "flute": "flauta", "flauto": "flauta", "double bass": "contrabaixo",
     "sax ": "saxofone ", "flautim": "piccolo", "corno ingles": "corne ingles", "clarinete em mi": "requinta",
     "bass clarinet": "clarinete baixo", "timbales": "timpanos",
     "trompa em": "trompa", "corne frances": "trompa", "trumpet": "trompete", "trombone tenor": "trombone",

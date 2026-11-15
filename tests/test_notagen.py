@@ -1,6 +1,7 @@
 """Motor NotaGen opcional (ticket 04 da composição musical): detecção, Registro/roteador e etapa na Composição."""
 
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -170,14 +171,46 @@ def test_modo_manual_python_com_gerar_notagen_recusa_com_a_alternativa(tmp_path)
     assert r.versao is None and "NotaGen (automático)" in r.resumo and fake.chamadas == []
 
 
-def test_partes_e_compassos_diferentes_do_pedido_viram_aviso(tmp_path):
+def test_quantidade_de_partes_incompativel_recusa_sem_gravar(tmp_path):
     fake = CompositorFake()
-    _, r = _gerar(tmp_path, fake, instrumentos=("flauta", "oboe", "fagote"))
-    assert [p.instrumento for p in r.versao.ir.partes] == ["Violin", "Cello"]
-    assert "2 partes para 3 instrumentos pedidos" in r.resumo
+    c, r = _gerar(tmp_path, fake, instrumentos=("flauta", "oboe", "fagote"))
+    assert r.versao is None and c.versoes == []
+    assert "2 partes (Violin, Cello)" in r.resumo and "3 instrumentos pedidos" in r.resumo
+
+
+def test_compassos_a_menos_viram_aviso(tmp_path):
+    fake = CompositorFake()
     fake.gerar = lambda condicao, compassos, semente: CompositorFake().gerar(condicao, 1, semente)
     _, r = _gerar(tmp_path, fake)
     assert "1 de 2 compassos" in r.resumo
+
+
+def test_pedido_de_duo_com_saida_solo_preserva_versao_e_nao_chama_sintese(tmp_path):
+    from muschat.reasoning import responder
+    from tests.test_reasoning import ANALISE_OK, FakeChat, FakeRetriever
+    c, anterior = _gerar(tmp_path / "base", CompositorFake())
+
+    class Solo:
+        def gerar(self, condicao, compassos, semente):
+            raiz = ET.fromstring(CompositorFake().gerar(condicao, compassos, semente))
+            raiz.remove(raiz.find("part"))
+            lista = raiz.find("part-list")
+            lista.remove(lista.find("score-part"))
+            lista.find("score-part/part-name").text = "Violoncello"
+            return ET.tostring(raiz)
+
+    plano = _plano("gerar_notagen", parametros={"compassos": 8}, instrumentos=["flauta", "violoncelo"])
+    plano["operacoes"][0]["condicao"] = CONDICOES[0]
+    plano["operacoes"].append({"procedimento": "rarefazer"})
+    chat = FakeChat([])
+    resposta = responder("crie oito compassos para flauta e cello", composicao=c,
+        gerador=GeradorFake({**ANALISE_OK, "notacao": "compor"}, plano), chat=chat,
+        retriever=FakeRetriever([]), modelo="m", modo="notagen",
+        registro=_registro(_instalacao(tmp_path / "duo")), compositor=Solo())
+    assert c.atual is anterior.versao and len(c.versoes) == 1
+    assert not resposta.partituras and not chat.mensagens
+    assert "1 partes (Violoncello)" in resposta.final
+    assert "flauta, violoncelo" in resposta.final
 
 
 def test_falha_do_processo_vira_mensagem_e_nao_excecao(tmp_path):

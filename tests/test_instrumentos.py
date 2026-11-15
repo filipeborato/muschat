@@ -79,3 +79,22 @@ def test_tecnicas_de_um_instrumento_so_nao_vao_para_os_vizinhos_de_familia():
     assert cabe("una corda", "Piano") and not cabe("una corda", "Celesta")
     assert cabe("rim shot", "Caixa") and not cabe("rim shot", "Triângulo")
     assert all(i in INSTRUMENTOS for t in TECNICAS.values() for i in t.so)
+
+
+@pytest.mark.parametrize("nome", ["Violoncello", "Cello", "violoncelo"])
+def test_cello_importado_tem_tessitura_e_nao_recebe_frullato(nome):
+    from muschat.notacao.tecnicas import cabe
+    assert instrumento(nome) == instrumento("violoncelo")
+    assert not cabe("frullato", nome)
+    assert cabe("col legno tratto", nome)
+
+
+def test_instrumento_desconhecido_nao_autoriza_tecnica_sem_validacao():
+    from muschat.notacao.tecnicas import cabe
+    assert not cabe("frullato", "Instrumento sem identificação")
+
+
+@pytest.mark.parametrize("nome,esperado", [("Violin 1", "violino"), ("Flute", "flauta"),
+                                         ("Flauto", "flauta"), ("Double Bass", "contrabaixo")])
+def test_nomes_de_instrumentos_importados(nome, esperado):
+    assert instrumento(nome) == instrumento(esperado)

@@ -183,12 +183,12 @@ def tecnicas_da_familia(familia: Familia) -> list[str]:
 
 
 def cabe(nome_tecnica: str, nome_instrumento: str) -> bool:
-    """A técnica se toca neste instrumento? Instrumento fora da tabela não tem como ser conferido: vale."""
+    """Só autoriza técnicas quando o instrumento pode ser conferido na tabela."""
     t = tecnica(nome_tecnica)
     try:
         chave = identificar(nome_instrumento)
     except ValueError:
-        return True
+        return False
     return INSTRUMENTOS[chave].familia in t.familias and (not t.so or chave in t.so)
 
 
