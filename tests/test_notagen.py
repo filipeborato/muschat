@@ -113,6 +113,7 @@ def test_notagen_generates_external_version_with_plan_instruments(tmp_path):
     events = [e for _, _, e in result.version.ir.events()]
     assert {(e.provenance.source, e.provenance.author) for e in events} == {("external", "NotaGen-X")}
     assert [p.instrument for p in result.version.ir.parts] == ["Violin", "Cello"]
+    assert [p.clef for p in result.version.ir.parts] == ["treble", "bass"]
     assert result.version.experiment["steps"][0]["engine"] == "notagen"
     assert list(result.version.experiment["external_outputs"]) == [0]
 
@@ -290,7 +291,10 @@ def test_subprocess_failure_becomes_message_instead_of_raw_exception(tmp_path):
 def test_two_section_form_and_section_edit_preserves_first_section(tmp_path):
     class WithTempo(FakeComposer):
         def generate(self, *args):
-            return super().generate(*args).replace(
+            data = super().generate(*args)
+            if len(self.calls) == 2:
+                data = data.replace(b"<beats>3</beats>", b"<beats>4</beats>")
+            return data.replace(
                 b"</attributes>", b'</attributes><direction><sound tempo="120"/></direction>'
             )
 
@@ -327,6 +331,8 @@ def test_two_section_form_and_section_edit_preserves_first_section(tmp_path):
     assert result.version is not None, result.summary
     assert [v[1] for v in fake.calls] == [2, 2]
     before = result.version.ir
+    assert [m.numerator for m in before.measures] == [3, 3, 4, 4]
+    assert before.measures[2].tempo == 120
     edit = _plan("transpose", parameters={"interval": 100})
     edit["operations"][0]["section"] = "B"
     result = run_plan(edit)
@@ -335,6 +341,10 @@ def test_two_section_form_and_section_edit_preserves_first_section(tmp_path):
     for pa, pn in zip(before.parts, result.version.ir.parts):
         assert pa.voices[0].events[:2] == pn.voices[0].events[:2]
         assert pn.voices[0].events[2].pitches[0].midicents == pa.voices[0].events[2].pitches[0].midicents + 100
+    edit["sections"] = [{**section, "character": "new character"} for section in plan["sections"]]
+    evolved = run_plan(edit)
+    assert evolved.version is not None, evolved.summary
+    assert evolved.version.experiment.plan.sections[0].character == "new character"
     edit["operations"][0]["section"] = "missing"
     assert run_plan(edit).version is None
-    assert len(comp.versions) == 2
+    assert len(comp.versions) == 3

@@ -24,13 +24,13 @@ from muschat.constraints import check_constraints
 from muschat.instruments import FAMILIES, INSTRUMENTS, instrument as get_instrument
 from muschat.notagen import ComposerBackend
 from muschat.notation.musicxml import from_musicxml, to_musicxml
-from muschat.notation.techniques import family_techniques, unplayable_techniques
+from muschat.notation.techniques import family_techniques, fits_instrument, unplayable_techniques
 from muschat.openmusic import TASKS_DIR, OmTask, create_task, import_output
 from muschat.plan import Operation, Parameter, Plan
 from muschat.procedures import CATALOG, Procedure
 from muschat.recipes import documentation as recipes_in_prompt, expand_recipe
 from muschat.registry import ENGINE_NAME, Registry
-from muschat.router import MODES, Mode, NoRouteError, Step, route
+from muschat.router import MODES, Mode, NoRouteError, Step, effective_mode, route
 from muschat.score_ir import Note, Part, Provenance, ScoreIR, Source, diff_scores, locate
 from muschat.security import sanitize
 
@@ -156,6 +156,7 @@ def reapply(
         tasks_dir=tasks_dir,
         composer=composer,
         reuse=reuse,
+        plan_expanded=ver.experiment.plan_expanded,
     )
 
 
@@ -172,6 +173,7 @@ def resume(
     if p is None or p.task is None:
         return _refusal(RefusalError("no OpenMusic step is awaiting output."))
     try:
+        _validate_selection(p.plan.for_step(p.step), p.current, catalog)
         material = import_output(
             p.task,
             output,
@@ -180,7 +182,7 @@ def resume(
             plan=p.plan.for_step(p.step),
             rng=random.Random(f"{p.seed}/{p.step}"),
         )
-    except ValueError as exc:
+    except (ValueError, RefusalError) as exc:
         return TurnResult(
             f"OpenMusic output was rejected and the task is still awaiting you: {exc}.",
             None,
@@ -280,16 +282,19 @@ def _apply_plan(
     tasks_dir: Path,
     composer: ComposerBackend | None,
     reuse: dict[int, str] | None = None,
+    plan_expanded: bool = False,
 ) -> TurnResult:
     current = None if base is None else composition.versions[base].ir
     try:
         try:
-            plan = expand_recipe(plan)
+            if not plan_expanded:
+                plan = expand_recipe(plan)
         except ValueError as exc:
             raise RefusalError(str(exc)) from exc
-        effective = plan.mode if mode == "auto" else mode
+        effective = effective_mode(plan, mode)
         if (
-            effective in ("hybrid", "openmusic")
+            not plan_expanded
+            and effective in ("hybrid", "openmusic")
             and plan.instruments
             and any(o.procedure == "harmonic_series" for o in plan.operations)
         ):
@@ -482,6 +487,7 @@ def _record_version(
             "model": ctx.model,
             "mode": ctx.decision.mode,
             "plan": plan.model_dump(mode="json"),
+            "plan_expanded": True,
             "decision": ctx.decision.model_dump(mode="json"),
             "operation": ctx.operation,
             "procedures": [op.procedure for op in plan.operations],
@@ -632,10 +638,16 @@ def _notagen_step(
 def _with_instrument(part: Part, name: str) -> Part:
     """Rename a NotaGen part (and attach its range when known) to the instrument requested in the plan."""
     try:
-        rng = get_instrument(name).range
+        inst = get_instrument(name)
     except ValueError:
-        rng = part.range
-    return part.model_copy(update={"instrument": name.strip().capitalize(), "range": rng})
+        return part.model_copy(update={"instrument": name.strip().capitalize()})
+    return part.model_copy(update={
+        "instrument": name.strip().capitalize(), "range": inst.range, "clef": inst.clef,
+        "voices": [v.model_copy(update={"events": [
+            e.model_copy(update={"techniques": [t for t in e.techniques if fits_instrument(t, name)]})
+            if isinstance(e, Note) else e for e in v.events
+        ]}) for v in part.voices],
+    })
 
 
 def _validate_ir(ir: ScoreIR) -> ScoreIR:
@@ -761,9 +773,9 @@ def _plan_composition(
     )
     try:
         plan = Plan.model_validate_json(response.text or "")
-        if sections:
+        if sections and not plan.sections:
             plan = Plan.model_validate({**plan.model_dump(), "sections": sections})
-        effective = plan.mode if mode == "auto" else mode
+        effective = effective_mode(plan, mode)
         if effective in ("openmusic", "hybrid"):
             approved = {
                 name

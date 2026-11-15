@@ -318,6 +318,7 @@ class Part(BaseModel):
 
 
 class Measure(BaseModel):
+    materialized: bool = True
     numerator: int = Field(gt=0)
     denominator: int = Field(gt=0)
     tempo: int | None = Field(default=None, gt=0, description="Quarter notes per minute starting at this measure.")

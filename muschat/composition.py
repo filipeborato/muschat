@@ -8,10 +8,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from muschat.plan import (
     PROCEDURE_ALIASES,
+    Mode,
     Plan,
     normalize_instrument_name,
     normalize_mode,
@@ -244,18 +245,69 @@ class OmTask(BaseModel):
         return self
 
 
+class Experiment(BaseModel):
+    """Typed experiment state; extra fields preserve historical metadata."""
+
+    model_config = ConfigDict(extra="allow")
+    prompt: str = ""
+    model: str = ""
+    mode: Mode = "auto"
+    plan: Plan | None = None
+    plan_expanded: bool = False
+    decision: RoutingDecision | None = None
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    parameters: list[dict[str, float]] = Field(default_factory=list)
+    seed: int | None = None
+    intermediates: list[ScoreIR] = Field(default_factory=list)
+    external_outputs: dict[int, str] = Field(default_factory=dict)
+    violations: list[dict[str, Any]] = Field(default_factory=list)
+    audio: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate(cls, data: object) -> object:
+        if isinstance(data, dict):
+            data = migrate_legacy_experiment_dict(data)
+            data["violations"] = [v if isinstance(v, dict) else {"message": v} for v in data.get("violations", [])]
+        return data
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "external_outputs":
+            return self.external_outputs
+        if key == "violations":
+            return [v.get("message", str(v)) for v in self.violations]
+        if key not in type(self).model_fields and key not in (self.model_extra or {}):
+            raise KeyError(key)
+        value = getattr(self, key)
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode="json")
+        if key == "intermediates":
+            return [ir.model_dump(mode="json") for ir in self.intermediates]
+        return value
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self[key] if key in type(self).model_fields or key in (self.model_extra or {}) else default
+        return default if value is None else value
+
+    def items(self):
+        return self.model_dump(mode="json").items()
+
+
 @dataclass(frozen=True)
 class Version:
     ir: ScoreIR
     summary: str
-    experiment: dict[str, Any]
+    experiment: Experiment
     previous: int | None
     created_at: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "experiment", Experiment.model_validate(self.experiment))
 
     @property
     def reapplicable(self) -> bool:
         """Only versions produced by a planned operation can be reapplied (imported score versions cannot)."""
-        return "plan" in self.experiment or "plano" in self.experiment
+        return self.experiment.plan is not None
 
 
 class PendingTask(BaseModel):
@@ -330,8 +382,8 @@ class Composition:
     def current(self) -> Version | None:
         return None if self.index is None else self.versions[self.index]
 
-    def add(self, ir: ScoreIR, summary: str, experiment: dict[str, Any], *, previous: int | None) -> Version:
-        version = Version(ir, summary, migrate_legacy_experiment_dict(dict(experiment)), previous)
+    def add(self, ir: ScoreIR, summary: str, experiment: Experiment | dict[str, Any], *, previous: int | None) -> Version:
+        version = Version(ir, summary, Experiment.model_validate(experiment), previous)
         self.versions.append(version)
         self.index = len(self.versions) - 1
         return version
@@ -356,7 +408,7 @@ class Composition:
                     {
                         "ir": v.ir.model_dump(mode="json"),
                         "summary": v.summary,
-                        "experiment": v.experiment,
+                        "experiment": v.experiment.model_dump(mode="json"),
                         "previous": v.previous,
                         "created_at": v.created_at.isoformat(),
                     }
@@ -382,7 +434,7 @@ class Composition:
                         migrate_legacy_score_ir_dict(v["ir"]) if isinstance(v["ir"], dict) else v["ir"]
                     ),
                     str(v["summary"] if "summary" in v else v["resumo"]),
-                    migrate_legacy_experiment_dict(dict(v["experiment"] if "experiment" in v else v["experimento"])),
+                    Experiment.model_validate(v["experiment"] if "experiment" in v else v["experimento"]),
                     v["previous"] if "previous" in v else v["anterior"],
                     datetime.fromisoformat(v["created_at"] if "created_at" in v else v["data"]),
                 )

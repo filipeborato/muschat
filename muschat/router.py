@@ -54,11 +54,16 @@ class NoRouteError(Exception):
     """Raised when the requested mode cannot execute the plan; message includes reason and alternatives."""
 
 
+def effective_mode(plan: Plan, mode: Mode) -> Mode:
+    """Resolve selector precedence before capability-dependent routing rules."""
+    mode = normalize_mode(mode)
+    return plan.mode if mode == "auto" else mode
+
+
 def route(plan: Plan, mode: Mode, registry: Registry) -> RoutingDecision:
     mode = normalize_mode(mode)
-    effective, reasons = mode, []
+    effective, reasons = effective_mode(plan, mode), []
     if mode == "auto" and plan.mode != "auto":
-        effective = plan.mode
         reasons.append(f"Request selected engine {MODES[effective]}; treated as manual choice (R3).")
     elif plan.mode not in ("auto", mode):
         reasons.append(

@@ -375,3 +375,33 @@ def test_unplayable_technique_appears_in_summary_violations():
     r = _compose(Composition(), plan)
     assert "unplayable technique" in r.summary and "slap" in r.summary and "too high" in r.summary
     assert r.version is not None and any(v.startswith("unplayable technique") for v in r.version.experiment["violations"])
+
+
+def test_typed_experiment_roundtrip_defaults_and_extra_metadata():
+    from muschat.composition import Experiment
+
+    c = _quartet()
+    restored = Composition.from_json(c.to_json())
+    exp = restored.current.experiment
+    assert isinstance(exp, Experiment)
+    assert exp.plan_expanded and restored.current.reapplicable
+    legacy = Experiment.model_validate({"external_outputs": {"0": "xml"}, "custom": 12})
+    assert legacy.external_outputs == {0: "xml"}
+    assert not legacy.plan_expanded and legacy.custom == 12
+
+
+def test_expanded_recipe_reapply_preserves_operations_and_score(monkeypatch):
+    c = Composition()
+    plan = _plan()
+    plan["recipe"] = "spectral"
+    first = _compose(c, plan)
+    assert first.version is not None, first.summary
+    original = first.version
+    def unexpected_expansion(plan):
+        raise AssertionError("expanded plans must not expand again")
+
+    monkeypatch.setattr("muschat.orchestrator.expand_recipe", unexpected_expansion)
+    result = reapply(c, original.experiment.parameters)
+    assert result.version is not None, result.summary
+    assert [o.procedure for o in result.version.experiment.plan.operations] == [o.procedure for o in original.experiment.plan.operations]
+    assert result.version.ir.model_dump_json().replace("op2", "op1") == original.ir.model_dump_json()

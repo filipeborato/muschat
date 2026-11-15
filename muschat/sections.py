@@ -37,7 +37,7 @@ def insert_section(
         raise ValueError("NotaGen returned an incompatible measure count for the section")
     if current is None:
         total = max(s.end_measure for s in sections)
-        measures = [material.measures[0].model_copy(update={"tempo": None}) for _ in range(total)]
+        measures = [material.measures[0].model_copy(update={"tempo": None, "materialized": False}) for _ in range(total)]
         measures[first - 1 : last] = material.measures
         current = material.model_copy(
             update={
@@ -50,6 +50,17 @@ def insert_section(
                 ],
             }
         )
+    old_measures = current.measures[first - 1:last]
+    if all(not m.materialized for m in old_measures):
+        old_end = current.measure_starts()[first - 1] + sum(m.length for m in old_measures)
+        delta = sum(m.length for m in material.measures) - sum(m.length for m in old_measures)
+        current = current.model_copy(update={
+            "measures": [*current.measures[:first - 1], *material.measures, *current.measures[last:]],
+            "parts": [p.model_copy(update={"voices": [v.model_copy(update={"events": [
+                e.model_copy(update={"start": e.start + delta}) if e.start >= old_end else e
+                for e in v.events
+            ]}) for v in p.voices]}) for p in current.parts],
+        })
     if any(
         (a.numerator, a.denominator, a.length) != (b.numerator, b.denominator, b.length)
         for a, b in zip(material.measures, current.measures[first - 1 : last])

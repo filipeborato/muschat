@@ -164,10 +164,14 @@ def _series_output(values: list[float], ctx: PatchContext) -> ScoreIR:
     letters = partial_spellings(
         ctx.parameters["fundamental"], len(values), int(ctx.parameters.get("microtone", 1))
     )
-    notes = [e for _, _, e in score.events() if isinstance(e, Note)]
-    for note, letter in zip(notes, letters):
-        note.pitches = [Pitch(midicents=note.pitches[0].midicents, spelling=letter)]
-    return score
+    spellings = iter(letters)
+    return score.model_copy(update={"parts": [p.model_copy(update={"voices": [
+        v.model_copy(update={"events": [
+            e.model_copy(update={"pitches": [Pitch(midicents=e.pitches[0].midicents, spelling=next(spellings))]})
+            if isinstance(e, Note) else e for e in v.events
+        ]}) for v in p.voices
+    ]}) for p in score.parts]})
+
 
 
 # --- Chaos: Verhulst logistic orbit ----------------------------------------------------------------------------------
