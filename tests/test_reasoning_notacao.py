@@ -1,4 +1,5 @@
 import json
+import pytest
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 
@@ -160,6 +161,24 @@ def test_pedido_de_composicao_grava_versao_e_mostra_a_partitura_com_o_resumo():
     [partitura] = resp.partituras
     assert partitura.origem == "composicao" and partitura.musicxml.count("<score-part ") == 4
     assert "serie_harmonica" in _sistema(c) and composicao.atual.resumo in _sistema(c)
+
+
+@pytest.mark.parametrize("falha", [False, True])
+def test_composicao_chega_ao_chat_mesmo_sem_sintese(falha):
+    from google.genai import errors
+    class ChatSemSintese(FakeChat):
+        def send_message(self, message, config=None):
+            if falha:
+                raise errors.ServerError(503, {"error": {"code": 503, "message": "indisponível"}})
+            return SimpleNamespace(text=" ")
+    log = []
+    c = Composicao()
+    g = GeradorSequencial(log, json.dumps({**ANALISE_OK, "notacao": "compor"}), json.dumps(PLANO))
+    r = responder("componha", gerador=g, chat=ChatSemSintese(log), retriever=FakeRetriever(log),
+                  modelo="m", composicao=c)
+    assert len(c.versoes) == 1
+    assert c.atual.resumo in r.final
+    assert len(r.partituras) == 1 and r.partituras[0].origem == "composicao"
 
 
 def test_plano_recusado_chega_a_sintese_sem_partitura():

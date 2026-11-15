@@ -169,11 +169,19 @@ def responder(
         partituras="\n".join(f"- {_neutralizar(p.legenda)}: {_neutralizar(p.titulo)}" for p in partituras) or "nenhuma",
         operacao=_neutralizar(operacao),
     )
-    resposta = chat.send_message(
-        pergunta_segura,
-        config=types.GenerateContentConfig(system_instruction=prompts.SISTEMA + contexto, temperature=0.5),
-    )
-    return Resposta(resposta.text or "", analise.model_dump(), trechos, False, partituras)
+    try:
+        resposta = chat.send_message(
+            pergunta_segura,
+            config=types.GenerateContentConfig(system_instruction=prompts.SISTEMA + contexto, temperature=0.5),
+        )
+        texto = (resposta.text or "").strip()
+    except (errors.APIError, httpx2.TransportError):
+        if analise.notacao != "compor":
+            raise
+        texto = ""
+    if not texto and analise.notacao == "compor":
+        texto = operacao + " A explicação do Gemini não ficou disponível; este é o resultado real da operação."
+    return Resposta(texto, analise.model_dump(), trechos, False, partituras)
 
 
 def _partituras(
