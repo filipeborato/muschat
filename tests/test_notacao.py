@@ -229,3 +229,64 @@ def test_notas_sem_grafia_usam_sustenido_e_grafia_forca_a_letra():
               for n in _notas(para_musicxml(ir))]
     assert passos == [("C", "1", "sharp"), ("D", "-1", "flat"), ("C", "1.5", "three-quarters-sharp"),
                       ("C", "0.25", "natural-up")]
+
+@pytest.mark.parametrize("nome,diatonico,cromatico,oitavas,letra,oitava", [
+    ("clarinete", -1, -2, 0, "D", "4"),
+    ("clarone", -1, -2, -1, "D", "5"),
+    ("trompa", -4, -7, 0, "G", "4"),
+    ("saxofone alto", -5, -9, 0, "A", "4"),
+    ("contrabaixo", 0, 0, -1, "C", "5"),
+    ("piccolo", 0, 0, 1, "C", "3"),
+    ("clarinete baixo", -1, -2, -1, "D", "5"),
+    ("clarinete contrabaixo", -1, -2, -2, "D", "6"),
+    ("trompete", -1, -2, 0, "D", "4"),
+    ("saxofone soprano", -1, -2, 0, "D", "4"),
+    ("saxofone tenor", -1, -2, -1, "D", "5"),
+    ("saxofone baritono", -5, -9, -1, "A", "5"),
+    ("requinta", 2, 3, 0, "A", "3"),
+    ("corne ingles", -4, -7, 0, "G", "4"),
+    ("contrafagote", 0, 0, -1, "C", "5"),
+    ("violao", 0, 0, -1, "C", "5"),
+    ("guitarra", 0, 0, -1, "C", "5"),
+    ("flauta contralto", -3, -5, 0, "F", "4"),
+    ("flauta baixo", 0, 0, -1, "C", "5"),
+    ("oboe d'amore", -2, -3, 0, "E", "4"),
+    ("trompete piccolo", 6, 10, 0, "D", "3"),
+    ("cornet", -1, -2, 0, "D", "4"),
+    ("flugelhorn", -1, -2, 0, "D", "4"),
+    ("xilofone", 0, 0, 1, "C", "3"),
+    ("glockenspiel", 0, 0, 2, "C", "2"),
+    ("crotalos", 0, 0, 2, "C", "2"),
+    ("celesta", 0, 0, 1, "C", "3"),
+])
+def test_grade_transposta_declara_intervalo_e_volta_ao_som_real(nome, diatonico, cromatico, oitavas, letra, oitava):
+    from muschat.notacao.musicxml import de_musicxml
+
+    ir = _partitura([Nota(alturas=["C4+", "E4"], duracao="inteira")], instrumento=nome)
+    antes = ir.model_dump()
+    xml = para_musicxml(ir, transposta=True)
+    raiz = ET.fromstring(xml)
+    transpor = raiz.find(".//transpose")
+    assert transpor.findtext("diatonic") == str(diatonico)
+    assert transpor.findtext("chromatic") == str(cromatico)
+    assert transpor.findtext("octave-change") == (str(oitavas) if oitavas else None)
+    nota = raiz.find(".//note")
+    assert (nota.findtext("pitch/step"), nota.findtext("pitch/alter"), nota.findtext("pitch/octave")) == (letra, "-0.5" if nome == "oboe d'amore" else "0.5", oitava)
+    for transposta in (False, True):
+        lida, avisos = de_musicxml(para_musicxml(ir, transposta=transposta).encode())
+        assert not avisos
+        assert [a.midicents for a in lida.partes[0].vozes[0].eventos[0].alturas] == [6050, 6400]
+    assert ET.fromstring(para_musicxml(ir)).find(".//transpose") is None
+    assert ir.model_dump() == antes
+
+
+@pytest.mark.parametrize("nome,altura,esperada", [
+    ("Clarinete em Si bemol", "Bb3", ("C", None, "4")),
+    ("Requinta", "C4-", ("A", "-0.5", "3")),
+    ("Instrumento inventado", "C4+", ("C", "0.5", "4")),
+    ("Violino", "C4+", ("C", "0.5", "4")),
+])
+def test_transposicao_preserva_enarmonia_e_aceita_nome_livre(nome, altura, esperada):
+    ir = _partitura([Nota(alturas=[altura], duracao="inteira")], instrumento=nome)
+    nota = _notas(para_musicxml(ir, transposta=True))[0]
+    assert tuple(nota.findtext(f"pitch/{campo}") for campo in ("step", "alter", "octave")) == esperada

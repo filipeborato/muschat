@@ -164,3 +164,14 @@ def test_tecnica_fora_do_registro_curta_demais_ou_sem_altura_precisa_e_apontada(
         "fl c.1: jet whistle (Flauta): não tem altura precisa (escrita microtonal)",
         "cb c.1: slap (Clarinete baixo): fora do registro (agudo demais)",
     ]
+
+def test_zip_respeita_grade_transposta_sem_mudar_midi():
+    import xml.etree.ElementTree as ET
+    from tests.test_composicao import _quarteto
+
+    c = _quarteto()
+    c.versoes[0].ir.partes[0].instrumento = "Clarinete"
+    with zipfile.ZipFile(io.BytesIO(pacote(c, 0, transposta=True))) as z:
+        raiz = ET.fromstring(z.read("composicao_v1.musicxml"))
+        assert raiz.findtext(".//transpose/chromatic") == "-2"
+        assert z.read("composicao_v1.mid") == para_midi(c.versoes[0].ir)

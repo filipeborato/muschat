@@ -11,6 +11,7 @@ from fractions import Fraction
 from itertools import accumulate
 from typing import get_args
 
+from muschat.instrumentos import instrumento, transposicao
 from muschat.musicir import (
     CLASSE_DA_LETRA, Altura, Compasso, Dinamica, MusicIR, Nota, Parte, Pausa, Proveniencia, Quialtera, Voz, ligam,
 )
@@ -26,7 +27,8 @@ _ACIDENTE = {Fraction(n, 4): nome for n, nome in [
 _LETRA_PADRAO = "C C D D E F F G G A A B".split()  # sem dica de grafia: sustenidos
 
 
-def para_musicxml(ir: MusicIR) -> str:
+def para_musicxml(ir: MusicIR, *, transposta: bool = False) -> str:
+    """Grade em som real por padrão; transposta=True escreve e declara os intervalos instrumentais."""
     raiz = ET.Element("score-partwise", version="4.0")
     _sub(_sub(raiz, "work"), "work-title", ir.titulo)
     lista = _sub(raiz, "part-list")
@@ -34,7 +36,7 @@ def para_musicxml(ir: MusicIR) -> str:
         _sub(_sub(lista, "score-part", id=parte.id), "part-name", parte.instrumento)
     divisoes = _divisoes(ir)
     for k, parte in enumerate(ir.partes):
-        _parte(_sub(raiz, "part", id=parte.id), parte, ir.compassos, divisoes, com_andamento=k == 0)
+        _parte(_sub(raiz, "part", id=parte.id), parte, ir.compassos, divisoes, com_andamento=k == 0, transposta=transposta)
     return ET.tostring(raiz, encoding="unicode", xml_declaration=True)
 
 
@@ -264,13 +266,14 @@ def _divisoes(ir: MusicIR) -> int:
     return math.lcm(8, *((t * 4).denominator for t in tempos))
 
 
-def _parte(el: ET.Element, parte: Parte, compassos: list[Compasso], divisoes: int, *, com_andamento: bool) -> None:
+def _parte(el: ET.Element, parte: Parte, compassos: list[Compasso], divisoes: int, *, com_andamento: bool, transposta: bool) -> None:
+    intervalo = transposicao(parte.instrumento) if transposta else (0, 0, 0)
     vozes = [v for v in parte.vozes if any(isinstance(e, (Nota, Pausa)) for e in v.eventos)]
-    escritas = [_EscritaVoz(v, divisoes) for v in vozes]
+    escritas = [_EscritaVoz(v, divisoes, intervalo) for v in vozes]
     inicios = list(accumulate((c.comprimento for c in compassos), initial=Fraction(0)))
     for n, compasso in enumerate(compassos, 1):
         medida = _sub(el, "measure", number=str(n))
-        _atributos(medida, compasso, compassos[n - 2] if n > 1 else None, parte, divisoes)
+        _atributos(medida, compasso, compassos[n - 2] if n > 1 else None, parte, divisoes, intervalo)
         if com_andamento and compasso.andamento:
             _andamento(medida, compasso.andamento)
         acidentes: dict[tuple[str, int], Fraction] = {}  # (step, oitava) -> alteração vigente no compasso
@@ -284,7 +287,8 @@ def _parte(el: ET.Element, parte: Parte, compassos: list[Compasso], divisoes: in
 class _EscritaVoz:
     """Escreve uma voz compasso a compasso, mantendo técnica, dinâmica e glissando em curso."""
 
-    def __init__(self, voz: Voz, divisoes: int):
+    def __init__(self, voz: Voz, divisoes: int, intervalo: tuple[int, int, int]):
+        self.intervalo = intervalo
         self.voz, self.divisoes, self.indicacoes, self.glissando_aberto = voz, divisoes, Indicacoes(), False
         self.ligada_aberta = False
         self.eventos = [e for e in voz.eventos if isinstance(e, (Nota, Pausa))]
@@ -348,7 +352,7 @@ class _EscritaVoz:
         tuplets = [(n, "start") for n, g in enumerate(cadeia, 1) if self.membros[g][0] == e.id]
         tuplets += [(n, "stop") for n, g in reversed(list(enumerate(cadeia, 1))) if self.membros[g][-1] == e.id]
         liga = isinstance(e, Nota) and ligam(e, seguinte)
-        _nota(medida, e, tecnicas, numero=numero, duracao=self._div(e.duracao), razao=razao, tuplets=tuplets,
+        _nota(medida, e, tecnicas, intervalo=self.intervalo, numero=numero, duracao=self._div(e.duracao), razao=razao, tuplets=tuplets,
               fecha_glissando=self.glissando_aberto and isinstance(e, Nota), abre_glissando=abre,
               acidentes=acidentes, ligaduras=[t for t, sim in (("stop", self.ligada_aberta), ("start", liga)) if sim])
         self.glissando_aberto, self.ligada_aberta = abre, liga
@@ -367,7 +371,8 @@ def _avanco(medida: ET.Element, tag: str, duracao: int, voz: int) -> None:
     _sub(el, "voice", str(voz))
 
 
-def _atributos(medida: ET.Element, c: Compasso, anterior: Compasso | None, parte: Parte, divisoes: int) -> None:
+def _atributos(medida: ET.Element, c: Compasso, anterior: Compasso | None, parte: Parte, divisoes: int,
+               intervalo: tuple[int, int, int]) -> None:
     nova_metrica = anterior is None or (c.numerador, c.denominador) != (anterior.numerador, anterior.denominador)
     if anterior is not None and not nova_metrica:
         return
@@ -379,11 +384,18 @@ def _atributos(medida: ET.Element, c: Compasso, anterior: Compasso | None, parte
     _sub(tempo, "beats", str(c.numerador))
     _sub(tempo, "beat-type", str(c.denominador))
     if anterior is None:
-        sign, line = _CLAVE[parte.clave]
+        clave_escrita = instrumento(parte.instrumento).clave_escrita if any(intervalo) else None
+        sign, line = _CLAVE[clave_escrita or parte.clave]
         clave = _sub(attrs, "clef")
         _sub(clave, "sign", sign)
         if line:
             _sub(clave, "line", line)
+        if any(intervalo):
+            transpor = _sub(attrs, "transpose")
+            _sub(transpor, "diatonic", str(intervalo[0]))
+            _sub(transpor, "chromatic", str(intervalo[1]))
+            if intervalo[2]:
+                _sub(transpor, "octave-change", str(intervalo[2]))
 
 
 def _andamento(medida: ET.Element, andamento: int) -> None:
@@ -404,7 +416,7 @@ def _dinamica(medida: ET.Element, dinamica: str) -> None:
     _sub(_sub(tipo, "dynamics"), dinamica)
 
 
-def grafia(a: Altura) -> tuple[str, Fraction, int]:
+def grafia(a: Altura, intervalo: tuple[int, int, int] = (0, 0, 0)) -> tuple[str, Fraction, int]:
     """(step, alteração em semitons, oitava); a dica de grafia vale se der alteração de até 2 semitons."""
     n = Fraction(a.midicents, 100)
     letra: str | None = a.grafia
@@ -414,6 +426,13 @@ def grafia(a: Altura) -> tuple[str, Fraction, int]:
             letra = None
     if letra is None:
         semitom = round(Fraction(a.midicents, 50)) * 50 // 100  # quarto de tom mais próximo, abaixo do semitom
+        letra, oitava = _LETRA_PADRAO[semitom % 12], semitom // 12 - 1
+    diatonica, cromatica, oitavas = intervalo
+    oitava, indice = divmod(7 * oitava + "CDEFGAB".index(letra) - diatonica - 7 * oitavas, 7)
+    letra = "CDEFGAB"[indice]
+    n -= cromatica + 12 * oitavas
+    if abs(n - 12 * (oitava + 1) - CLASSE_DA_LETRA[letra]) > 2:
+        semitom = round(n * 2) // 2
         letra, oitava = _LETRA_PADRAO[semitom % 12], semitom // 12 - 1
     return letra, n - 12 * (oitava + 1) - CLASSE_DA_LETRA[letra], oitava
 
@@ -430,6 +449,7 @@ def _nota(
     e: Nota | Pausa,
     tecnicas: list[Tecnica],
     *,
+    intervalo: tuple[int, int, int],
     numero: int,
     duracao: int,
     razao: Fraction,
@@ -440,7 +460,7 @@ def _nota(
     ligaduras: list[str],
 ) -> None:
     tipo, pontuada = _figura(e.duracao * razao, e.id)
-    alturas = [grafia(a) for a in e.alturas] if isinstance(e, Nota) else [None]
+    alturas = [grafia(a, intervalo) for a in e.alturas] if isinstance(e, Nota) else [None]
     notehead = next((t.notehead for t in tecnicas if t.notehead), None)
     for i, altura in enumerate(alturas):
         el = _sub(medida, "note")
