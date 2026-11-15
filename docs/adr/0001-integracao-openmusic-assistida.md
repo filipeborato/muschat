@@ -53,6 +53,10 @@ JSONs e tarefas existentes continuam legíveis e a saída pode ser produzida em 
   do OMChroma é renderizado pelo Muschat com o Csound detectado; a etapa do OM continua assistida. Problemas da
   Situation sem solução não vão ao OM: a busca exaustiva travou o app no teste real.
 
+- 2026-11-15: Cluster Engine (`alturas_por_restricoes.lisp`) validado no OM real com o mesmo esquema; a busca do
+  solver tem prazo de 60 s dentro das regras, e as regras entre vozes são preferência por padrão (obrigatórias
+  travaram a busca). Detalhes em docs/pesquisa/openmusic.md.
+
 ## Para evoluir
 
 1. **Semiautomático pela pasta `init`**: se o protótipo provar que o app instalado carrega `init/` na

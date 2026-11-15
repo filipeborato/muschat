@@ -669,5 +669,5 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         saida="saida.txt: V e, por voz, k seguido das k alturas das notas; -1 se não houver solução",
         passos=_passos("alturas_por_restricoes.lisp", " A busca pode levar alguns segundos."),
         montar=_ce_montar, ler=_ce_ler, autor="OpenMusic/Cluster Engine",
-        arquivo="patches/alturas_por_restricoes.lisp"),  # validado só depois de rodar no OM real  # sem arquivo: SuperVP não disponível para validar o patch
+        arquivo="patches/alturas_por_restricoes.lisp", validado=True),  # sem arquivo: SuperVP não disponível para validar o patch
 ]}

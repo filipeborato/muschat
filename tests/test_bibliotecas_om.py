@@ -7,7 +7,12 @@ from pathlib import Path
 
 from muschat.composicao import Composicao
 from muschat.musicir import Altura, Compasso, MusicIR, Nota, Parte, Pausa, Proveniencia, Voz
+import random
+
 from muschat.openmusic import PATCHES, InstalacaoOM
+from muschat.patches_om import Contexto
+from muschat.plano import Plano
+from muschat.procedimentos import CATALOGO
 from muschat.orquestrador import retomar
 from muschat.procedimentos.espectrais import parciais
 from muschat.registro import detectar
@@ -382,3 +387,19 @@ def test_cluster_engine_acorde_segue_a_altura_principal_dentro_dos_parciais(tmp_
     acorde = r2.versao.ir.partes[0].vozes[0].eventos[0].alturas
     assert [a.midicents for a in acorde] == [6000, 6700]  # 6000 + 700 cents: o parcial mais perto é 6700
 
+
+
+def test_saida_real_do_cluster_engine_importa_sobre_o_material_do_notagen():
+    """Validação real (docs/pesquisa/openmusic.md, 2026-11-15): entrada, saída e material gravados como evidência."""
+    evid = Path("docs/pesquisa/evidencias-openmusic")
+    material = MusicIR.model_validate_json((evid / "cluster-engine-material.json").read_text(encoding="utf-8"))
+    base = {k: f.padrao for k, f in CATALOGO["alturas_por_restricoes"].parametros.items()}
+    plano = Plano(objetivo="v", operacoes=[{"procedimento": "alturas_por_restricoes"}])
+    entrada = PATCHES["alturas_por_restricoes"].montar({**base, "notas_comuns": 1}, material, plano)
+    assert entrada == (evid / "cluster-engine-entrada.txt").read_text()
+    ctx = Contexto(base, entrada, evid, material, plano, random.Random(0), Proveniencia(origem="openmusic"))
+    valores = [float(x) for x in (evid / "cluster-engine-saida.txt").read_text().split()]
+    novo = PATCHES["alturas_por_restricoes"].ler(valores, ctx)
+    # 16, 8, 8 e 4 ataques (notas ligadas contam uma vez): toda nota recebeu altura do domínio do Cluster Engine
+    assert all(e.alturas[0].midicents in parciais(3600, 16, 1) for _, _, e in novo.eventos() if isinstance(e, Nota))
+    assert [(e.inicio, e.duracao) for _, _, e in novo.eventos()] == [(e.inicio, e.duracao) for _, _, e in material.eventos()]

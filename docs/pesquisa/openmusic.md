@@ -72,6 +72,26 @@ Listener (`Lisp › Load File`), com plano fixo e semente 7, sem o Gemini; as sa
 
 Artefatos locais: `.muschat/experimentos-reais/libs/`.
 
+### Cluster Engine: execução real em 2026-11-15
+
+Cluster Engine 1.1 (Sandred; porte para OM de P. Raposo) em `~/OM/Libraries/Cluster-Engine`, OM 8.0, Windows 11.
+Patch `alturas_por_restricoes.lisp` (`ClusterEngine` + `R-pitches-one-voice`, `R-pitch-pitch`, `HR-pitches-one-voice`)
+carregado pelo Listener sobre material do NotaGen-X (`Romantic_Faure, Gabriel_Chamber`, 4 vozes, 4 compassos 3/4).
+
+- **1ª tentativa:** `#<anonymous interpreted function ...> is a lexical closure.` O Cluster Engine compila cada regra
+  e o LispWorks não compila closures; a regra de salto era um `lambda` que capturava o salto. Corrigido com funções
+  globais com nome e o salto numa variável especial.
+- **2ª tentativa:** o OM ficou sem responder. Com "sem cruzamento" e "sem uníssono" obrigatórios a busca se prende
+  (log: `Current indexes: #(0 1 0 7 0 7 0 -1 4)` após 50 000 laços: 1º violino preso na 3ª nota, violoncelo sem
+  nenhuma): as vozes de baixo pegam alturas agudas, a de cima fica sem saída e o solver não recua os motores de ritmo
+  travados. Corrigido com prazo de 60 s dentro das regras (vira `-2` + `erro.txt`) e com as regras entre vozes como
+  **preferência** (`:heur-switch`) por padrão; obrigatória continua opcional.
+- **3ª tentativa:** as quatro tarefas terminaram (solo, duo, Fauré 2 e 4 compassos). Saída do trecho inteiro em
+  `evidencias-openmusic/cluster-engine-saida.txt`, lida pelo Muschat sem erro (o 1º violino recebeu 17 alturas para
+  16 ataques: o motivo de ritmo travado se repete; o excesso é descartado).
+- **Achado musical:** com "notas comuns" (heurística de repetir a altura) ligada, cada voz fica numa altura só do
+  começo ao fim. O padrão passou a ser desligada.
+
 ### Ticket 17: alvos da Chaos, restrições na Situation e aceite pelo Gemini (2026-11-12)
 
 - A mesma chamada `alea::verhulst` (`patches/chaos_verhulst.lisp`) agora dirige densidade, registro, dinâmica ou

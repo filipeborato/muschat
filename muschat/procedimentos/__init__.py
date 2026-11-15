@@ -186,7 +186,8 @@ CATALOGO: dict[str, Procedimento] = {p.nome: p for p in [
                                         "2 obrigatória (pode não ter solução)"),
                   "sem_cruzamento": Faixa(0, 2, 1, "a parte de cima acima da de baixo: 0 desligada, 1 preferência, "
                                           "2 obrigatória (pode não ter solução)"),
-                  "notas_comuns": Faixa(0, 1, 1, "1 = preferir repetir a altura anterior quando ela serve")},
+                  "notas_comuns": Faixa(0, 1, 0, "1 = preferir repetir a altura anterior (no OM real, ligada congela "
+                                        "cada voz numa altura só; use só em trechos curtos)")},
                  None),
     Procedimento("sintese_aditiva", "Só no OpenMusic (OMChroma + Csound): as notas da seleção controlam uma "
                  "síntese aditiva; cada nota vira parciais harmônicos cuja quantidade cresce do início ao fim. Gera "
