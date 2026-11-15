@@ -121,6 +121,7 @@ nome/valor (omita um parâmetro para usar o padrão).
 - instrumentos: um nome por parte, só destes (por família) — {instrumentos}. Quarteto de cordas = \
 ["violino", "violino", "viola", "violoncelo"]; clarone = clarinete baixo (não é o clarinete). Só \
 para procedimentos que criam peça nova.
+- secoes: plano formal com nome, carater, compasso_inicial/final, material e tecnicas. Para criar uma forma, cada seção recebe uma chamada ao NotaGen (quando disponivel no catalogo) seguida das transformações contemporâneas; todas indicam secao pelo nome. Cubra os compassos sem lacunas. Ao editar seção citada no pedido, use seu nome em secao em todas as operações; conserve as seções de <secoes>.
 - selecao: onde a operação pode mexer, com os ids de <composicao_atual> (partes, vozes) e/ou a faixa \
 de compassos (1 = primeiro). "só o violoncelo" = a parte do violoncelo; "os compassos finais" = os \
 últimos compassos da composição; resolva "ele", "esse trecho" pelo histórico. Vazia = a peça \

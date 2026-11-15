@@ -66,7 +66,8 @@ def compor(
     atual = composicao.atual.ir if composicao.atual else None
     try:
         plano = _planejar(pedido, atual, gerador=gerador, chat=chat, modelo=modelo, catalogo=catalogo,
-                          registro=registro)
+                          registro=registro, secoes=(composicao.atual.experimento.get("plano", {}).get("secoes", [])
+                                                   if composicao.atual else []))
     except Recusa as exc:
         return _recusa(exc)
     return _aplicar(plano, composicao, composicao.indice, pedido=pedido, modelo=modelo, modo=modo,
@@ -105,14 +106,14 @@ def retomar(composicao: Composicao, saida: bytes | str, *, catalogo: dict[str, P
     if p is None or p.tarefa is None:
         return _recusa(Recusa("nenhuma etapa do OpenMusic está aguardando."))
     try:
-        material = importar(p.tarefa, saida, operacao=p.operacao, atual=p.atual, plano=p.plano,
+        material = importar(p.tarefa, saida, operacao=p.operacao, atual=p.atual, plano=p.plano.para_etapa(p.etapa),
                             rng=random.Random(f"{p.semente}/{p.etapa}"))
     except ValueError as exc:  # a tarefa continua aguardando: o compositor pode reenviar
         return Resultado(f"A saída do OpenMusic foi recusada e a tarefa continua aguardando você: {exc}.", None,
                          p.tarefa)
     composicao.pendente = None  # daqui em diante, sucesso grava a Versão e falha descarta a lista inteira
     try:
-        nova = _conferir(p.plano, p.atual, material, origem="openmusic", operacao=p.operacao)
+        nova = _conferir(p.plano.para_etapa(p.etapa), p.atual, material, origem="openmusic", operacao=p.operacao)
         contexto = p.model_copy(update={"etapa": p.etapa + 1, "tarefa": None,
                                         "intermediarios": [*p.intermediarios, nova]})
         return _seguir(contexto, nova, composicao, catalogo, pasta_tarefas, compositor)
@@ -167,15 +168,40 @@ def _aplicar(plano: Plano, composicao: Composicao, base: int | None, *, pedido: 
              reuso: dict[int, str] | None = None) -> Resultado:
     atual = None if base is None else composicao.versoes[base].ir
     try:
+        if atual is None and plano.secoes:
+            ordenadas = sorted(plano.secoes, key=lambda s: s.compasso_inicial)
+            if ordenadas[0].compasso_inicial != 1 or any(
+                    a.compasso_final + 1 != b.compasso_inicial for a, b in zip(ordenadas, ordenadas[1:])):
+                raise Recusa("a forma precisa cobrir os compassos sem lacunas")
+            if any(not op.secao for op in plano.operacoes):
+                raise Recusa("cada operacao da forma precisa indicar sua secao")
+            for secao in plano.secoes:
+                ops = [op for op in plano.operacoes if op.secao.casefold() == secao.nome.casefold()]
+                if (len(ops) < 2 or ops[0].procedimento != "gerar_notagen"
+                        or any(op.procedimento == "gerar_notagen" for op in ops[1:])):
+                    raise Recusa("cada secao precisa de uma geracao NotaGen seguida de transformacoes")
         try:
             decisao = rotear(plano, modo, registro)
         except SemRota as exc:
             raise Recusa(str(exc)) from exc
         parametros, existe = [], atual is not None
-        for op in plano.operacoes:  # uma operação que cria peça vale para as seguintes do mesmo plano
+        for k, op in enumerate(plano.operacoes):  # uma operação que cria peça vale para as seguintes do mesmo plano
+            if op.secao and op.procedimento == "gerar_notagen":
+                try:
+                    sel = plano.para_etapa(k).selecao
+                except ValueError as exc:
+                    raise Recusa(str(exc)) from exc
+                assert sel.compasso_final is not None and sel.compasso_inicial is not None
+                op = op.model_copy(update={"parametros": [p for p in op.parametros if p.nome != "compassos"] + [
+                    Parametro(nome="compassos", valor=sel.compasso_final - sel.compasso_inicial + 1)]})
             parametros.append(_parametros(op, catalogo, existe))
             existe = existe or not catalogo[op.procedimento].requer_composicao
-        _validar_selecao(plano, atual)
+        for k in range(len(plano.operacoes)):
+            try:
+                alvo = plano.para_etapa(k)
+            except ValueError as exc:
+                raise Recusa(str(exc)) from exc
+            _validar_selecao(alvo, atual)
         _validar_condicoes(plano, decisao.etapas, registro)
         contexto = Pendencia(
             pedido=pedido, modelo=modelo, plano=plano, decisao=decisao, parametros=parametros,
@@ -192,6 +218,7 @@ def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catal
     intermediarios = list(ctx.intermediarios)
     for k in range(ctx.etapa, len(ctx.decisao.etapas)):
         etapa = ctx.decisao.etapas[k]
+        alvo = ctx.plano.para_etapa(k)
         if etapa.motor == "notagen":
             atual, ctx = _etapa_notagen(ctx, k, atual, compositor)
             intermediarios.append(atual)
@@ -199,7 +226,7 @@ def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catal
         if etapa.motor == "openmusic":
             try:
                 tarefa = criar_tarefa(etapa.procedimento, ctx.parametros[k], raiz=pasta, atual=atual,
-                                      plano=ctx.plano)
+                                      plano=alvo)
             except OSError as exc:
                 raise Recusa(f"não foi possível criar a pasta da tarefa do OpenMusic ({exc})") from exc
             except ValueError as exc:  # a entrada do patch não se monta (ex.: seleção sem notas)
@@ -211,10 +238,10 @@ def _seguir(ctx: Pendencia, atual: MusicIR | None, composicao: Composicao, catal
                              f"Escolha do motor: {' '.join(ctx.decisao.justificativa)}", None, tarefa)
         rng = random.Random(f"{ctx.semente}/{k}")  # uma semente por etapa: retomar depois de uma pausa reproduz
         try:
-            nova = catalogo[etapa.procedimento].funcao(atual, ctx.plano, ctx.parametros[k], rng)
+            nova = catalogo[etapa.procedimento].funcao(atual, alvo, ctx.parametros[k], rng)
         except ValueError as exc:  # inclui ValidationError
             raise Recusa(f"etapa {k + 1} ({etapa.procedimento}): {_primeira_linha(exc)}") from exc
-        atual = _conferir(ctx.plano, atual, nova, origem="algoritmo", operacao=ctx.operacao)
+        atual = _conferir(alvo, atual, nova, origem="algoritmo", operacao=ctx.operacao)
         intermediarios.append(atual)
     if atual is None:
         raise Recusa("o plano não produziu composição")
@@ -288,12 +315,14 @@ def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
     """Peça nova do NotaGen (ou a saída guardada, ao reaplicar), lida como MusicXML, com as partes renomeadas para
     os instrumentos do plano quando a quantidade bate."""
     op = ctx.plano.operacoes[k]
+    alvo = ctx.plano.para_etapa(k)
+    pedidos = int(ctx.parametros[k]["compassos"])
     xml = ctx.saidas_externas.get(k)
     if xml is None:
         if compositor is None:
             raise Recusa("o NotaGen não está ligado nesta sessão (MUSCHAT_NOTAGEN=1; ver README).")
         try:
-            xml = compositor.gerar(op.condicao, int(ctx.parametros[k]["compassos"]),
+            xml = compositor.gerar(op.condicao, pedidos,
                                    random.Random(f"{ctx.semente}/{k}").randrange(2**31)).decode("utf-8")
         except ValueError as exc:  # inclui UnicodeDecodeError
             raise Recusa(f"etapa {k + 1} ({op.procedimento}): {_primeira_linha(exc)}") from exc
@@ -301,7 +330,6 @@ def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
         ir, avisos = de_musicxml(xml.encode("utf-8"), Proveniencia(origem="externo", autor="NotaGen-X"))
     except ValueError as exc:
         raise Recusa(f"etapa {k + 1} ({op.procedimento}): saída ilegível: {_primeira_linha(exc)}") from exc
-    pedidos = int(ctx.parametros[k]["compassos"])
     if len(ir.compassos) < pedidos:  # a peça do modelo acabou antes
         avisos.append(f"o NotaGen escreveu {len(ir.compassos)} de {pedidos} compassos")
     if len(ctx.plano.instrumentos) == len(ir.partes):
@@ -310,7 +338,13 @@ def _etapa_notagen(ctx: Pendencia, k: int, atual: MusicIR | None,
     elif ctx.plano.instrumentos:
         avisos.append(f"o NotaGen escreveu {len(ir.partes)} partes para {len(ctx.plano.instrumentos)} instrumentos "
                       "pedidos; ficam os nomes dele")
-    nova = _conferir(ctx.plano, atual, ir, origem="externo", operacao=ctx.operacao)
+    if op.secao:
+        from muschat.secoes import inserir
+        try:
+            ir, atual = inserir(atual, ir, alvo.selecao, ctx.plano.secoes)
+        except ValueError as exc:
+            raise Recusa(str(exc)) from exc
+    nova = _conferir(alvo, atual, ir, origem="externo", operacao=ctx.operacao)
     return nova, ctx.model_copy(update={"saidas_externas": {**ctx.saidas_externas, k: xml},
                                         "avisos": [*ctx.avisos, *(neutralizar(a) for a in avisos)]})
 
@@ -354,8 +388,9 @@ def _primeira_linha(exc: Exception) -> str:
 
 
 def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "SessaoChat", modelo: str,
-              catalogo: dict[str, Procedimento], registro: Registro) -> Plano:
+              catalogo: dict[str, Procedimento], registro: Registro, secoes: list | None = None) -> Plano:
     texto = (f"<pergunta_usuario>\n{neutralizar(pedido)}\n</pergunta_usuario>\n"
+             f"<secoes>{neutralizar(str(secoes or []))}</secoes>\n"
              f"<composicao_atual>\n{resumir(atual)}\n</composicao_atual>")
     resposta = gerador.generate_content(
         model=modelo,
@@ -373,7 +408,10 @@ def _planejar(pedido: str, atual: MusicIR | None, *, gerador: "Gerador", chat: "
         ),
     )
     try:
-        return Plano.model_validate_json(resposta.text or "")
+        plano = Plano.model_validate_json(resposta.text or "")
+        if secoes:
+            plano = Plano.model_validate({**plano.model_dump(), "secoes": secoes})
+        return plano
     except ValidationError as exc:
         raise Recusa("o plano composicional devolvido pelo modelo não é válido.") from exc
 

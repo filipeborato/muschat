@@ -285,6 +285,10 @@ def _ajustar(c: Composicao):
     assert c.atual is not None and c.indice is not None
     exp = c.atual.experimento
     with st.popover("Ajustar parâmetros e reaplicar", width="stretch"):
+        for secao in exp["plano"].get("secoes", []):
+            st.write(f"{secao['nome']} - {secao['carater']} - compassos "
+                     f"{secao['compasso_inicial']}-{secao['compasso_final']}")
+            st.caption(f"{secao['material']} - {', '.join(secao['tecnicas'])}")
         for h in exp["plano"]["hipoteses"]:
             st.caption(f"Hipótese: {h}")
         novos = []

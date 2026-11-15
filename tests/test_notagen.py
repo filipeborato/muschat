@@ -170,3 +170,43 @@ def test_falha_do_processo_vira_mensagem_e_nao_excecao(tmp_path):
         local.gerar("A_B_C", 1, 1)
     with pytest.raises(ValueError, match="não é aceita"):
         local.gerar("X_Y_Z", 1, 1)
+
+
+def test_forma_duas_secoes_e_edicao_preserva_primeira(tmp_path):
+    class ComTempo(CompositorFake):
+        def gerar(self, *args):
+            return super().gerar(*args).replace(b'</attributes>', b'</attributes><direction><sound tempo="120"/></direction>')
+    fake = ComTempo()
+    reg = _registro(_instalacao(tmp_path))
+    plano = _plano("gerar_notagen", instrumentos=["violino", "violoncelo"])
+    plano["secoes"] = [dict(nome=n, carater="calmo", material="notas", tecnicas=[],
+                            compasso_inicial=i, compasso_final=i + 1) for n, i in [("A", 1), ("B", 3)]]
+    plano["operacoes"] = [op for n in ["A", "B"] for op in [
+        dict(procedimento="gerar_notagen", condicao=CONDICOES[0], secao=n),
+        dict(procedimento="transpor", secao=n, parametros=[dict(nome="intervalo", valor=50)])]]
+    c = Composicao()
+    def rodar(p):
+        return compor("editar B", c, gerador=GeradorFake(p), chat=ChatFake(), modelo="m",
+                      registro=reg, compositor=fake)
+    grande = {**plano, "secoes": [dict(nome="A", carater="calmo", material="notas",
+                                      compasso_inicial=1, compasso_final=1000000)],
+              "operacoes": plano["operacoes"][:2]}
+    assert rodar(grande).versao is None
+    incompleto = {**plano, "operacoes": plano["operacoes"][:2]}
+    assert rodar(incompleto).versao is None
+    assert fake.chamadas == []
+    r = rodar(plano)
+    assert r.versao is not None, r.resumo
+    assert [v[1] for v in fake.chamadas] == [2, 2]
+    antes = r.versao.ir
+    edicao = _plano("transpor", parametros={"intervalo": 100})
+    edicao["operacoes"][0]["secao"] = "B"
+    r = rodar(edicao)
+    assert r.versao is not None, r.resumo
+    assert r.versao.experimento["plano"]["secoes"] == plano["secoes"]
+    for pa, pn in zip(antes.partes, r.versao.ir.partes):
+        assert pa.vozes[0].eventos[:2] == pn.vozes[0].eventos[:2]
+        assert pn.vozes[0].eventos[2].alturas[0].midicents == pa.vozes[0].eventos[2].alturas[0].midicents + 100
+    edicao["operacoes"][0]["secao"] = "inexistente"
+    assert rodar(edicao).versao is None
+    assert len(c.versoes) == 2
