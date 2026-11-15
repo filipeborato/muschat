@@ -7,7 +7,7 @@ from muschat import musicir as ir
 from muschat.plano import Plano
 from muschat.instrumentos import instrumento, no_registro
 from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir
-from muschat.procedimentos.espectrais import parciais
+from muschat.procedimentos.espectrais import grafias_dos_parciais, parciais
 
 _DURACOES_SORTEADAS = [Fraction(1, 2), Fraction(3, 8), Fraction(1, 4), Fraction(1, 8)]
 
@@ -15,7 +15,9 @@ _DURACOES_SORTEADAS = [Fraction(1, 2), Fraction(3, 8), Fraction(1, 4), Fraction(
 def serie_harmonica(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:
     """Parciais 1..n da fundamental, aproximados, distribuídos por tessitura; ritmo sorteado em 4/4."""
     reservatorio = parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))
-    return _orquestrar(reservatorio, plano, p, rng, f"Série harmônica sobre {p['fundamental']:.0f} mc")
+    letras = grafias_dos_parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))
+    alturas = [ir.Altura(midicents=a, grafia=l) for a, l in zip(reservatorio, letras)]
+    return _orquestrar(alturas, plano, p, rng, f"Série harmônica sobre {p['fundamental']:.0f} mc")
 
 
 def orquestrar_material(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float],
@@ -23,20 +25,21 @@ def orquestrar_material(atual: ir.MusicIR | None, plano: Plano, p: dict[str, flo
     """As alturas da composição atual (ex.: o material espectral vindo do OpenMusic) como reservatório de uma peça
     nova para os instrumentos do plano, respeitando a tessitura."""
     atual = exigir(atual)
-    alturas = sorted({a.midicents for _, _, e in atual.eventos() if isinstance(e, ir.Nota) for a in e.alturas})
+    alturas = {a.midicents: a for _, _, e in atual.eventos() if isinstance(e, ir.Nota) for a in e.alturas}
     if not alturas:
         raise ValueError("orquestrar_material precisa de notas na composição atual")
-    return _orquestrar(alturas, plano, p, rng, f"{atual.titulo} — orquestrado")
+    return _orquestrar([alturas[a] for a in sorted(alturas)], plano, p, rng, f"{atual.titulo} — orquestrado")
 
 
-def _orquestrar(reservatorio: list[int], plano: Plano, p: dict[str, float], rng: random.Random,
+def _orquestrar(reservatorio: list[ir.Altura], plano: Plano, p: dict[str, float], rng: random.Random,
                 titulo: str) -> ir.MusicIR:
     prov = ir.Proveniencia(origem="algoritmo")
     partes = []
     for k, nome in enumerate(plano.instrumentos or QUARTETO, 1):
         inst = instrumento(nome)
         clave, tessitura = inst.clave, inst.tessitura
-        alturas = sorted({no_registro(a, tessitura) for a in reservatorio})
+        registradas = {no_registro(a.midicents, tessitura): a.grafia for a in reservatorio}
+        alturas = [ir.Altura(midicents=a, grafia=registradas[a]) for a in sorted(registradas)]
         eventos: list[ir.Evento] = []
         inicio = Fraction(0)
         for _ in range(int(p["compassos"])):
@@ -48,7 +51,7 @@ def _orquestrar(reservatorio: list[int], plano: Plano, p: dict[str, float], rng:
                     eventos.append(ir.Pausa(id=eid, inicio=inicio, duracao=duracao, proveniencia=prov))
                 else:
                     eventos.append(ir.Nota(id=eid, inicio=inicio, duracao=duracao, proveniencia=prov,
-                                           alturas=[ir.Altura(midicents=rng.choice(alturas))]))
+                                           alturas=[rng.choice(alturas)]))
                 inicio, resta = inicio + duracao, resta - duracao
         partes.append(ir.Parte(id=f"P{k}", instrumento=nome.strip().capitalize(), clave=clave,
                                tessitura=tessitura, vozes=[ir.Voz(id=f"P{k}V1", eventos=eventos)]))

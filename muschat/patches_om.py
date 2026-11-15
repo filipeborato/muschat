@@ -19,6 +19,7 @@ from muschat import musicir as ir
 from muschat.instrumentos import instrumento
 from muschat.plano import Plano
 from muschat.procedimentos.comum import DINAMICAS, QUARTETO, Grade, Ids, com_alturas, exigir, por_compasso
+from muschat.procedimentos.espectrais import grafias_dos_parciais
 from muschat.procedimentos.progressivos import densidade_por_compasso
 from muschat.restricoes import Restricao, verificar
 
@@ -110,9 +111,15 @@ def _serie_ler(valores: list[float], ctx: Contexto) -> ir.MusicIR:
     if fora := [v for v in valores if not 0 <= v <= 12700]:
         raise ValueError(f"valores fora de 0–12700 midicents: {fora[:5]}")
     passo = 100 // 2 ** int(ctx.parametros.get("microtom", 1))
-    return material([round(v / passo) * passo for v in valores],
+    novo = material([round(v / passo) * passo for v in valores],
                     titulo=f"Série harmônica sobre {ctx.parametros['fundamental']:.0f} mc (OpenMusic)",
                     proveniencia=ctx.proveniencia)
+    letras = grafias_dos_parciais(ctx.parametros["fundamental"], len(valores),
+                                 int(ctx.parametros.get("microtom", 1)))
+    notas = [e for _, _, e in novo.eventos() if isinstance(e, ir.Nota)]
+    for nota, letra in zip(notas, letras):
+        nota.alturas = [ir.Altura(midicents=nota.alturas[0].midicents, grafia=letra)]
+    return novo
 
 
 # --- Chaos: mapa logístico de Verhulst -> densidade, registro, dinâmica ou durações por compasso --------------------

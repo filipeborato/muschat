@@ -8,7 +8,8 @@ from fractions import Fraction
 from muschat import musicir as ir
 from muschat.instrumentos import instrumento, no_registro
 from muschat.plano import Plano
-from muschat.procedimentos.comum import QUARTETO, Grade, Ids, com_alturas, exigir, por_voz, repartir
+from muschat.notacao.musicxml import grafia
+from muschat.procedimentos.comum import QUARTETO, Grade, Ids, exigir, por_voz, repartir
 
 
 def parciais(fundamental: float, quantos: int, microtom: int) -> list[int]:
@@ -17,12 +18,29 @@ def parciais(fundamental: float, quantos: int, microtom: int) -> list[int]:
     return [round((fundamental + 1200 * math.log2(n)) / passo) * passo for n in range(1, quantos + 1)]
 
 
+# Graus relativos: 1..16 convencionais; 17..32 pela proximidade aos graus da escala justa.
+_GRAUS = (0, 0, 4, 0, 2, 4, 6, 0, 1, 2, 3, 4, 5, 6, 6, 0,
+          1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 6, 0)
+
+
+def grafias_dos_parciais(fundamental: float, quantos: int, microtom: int) -> list[ir.Letra]:
+    """Letras dos parciais 1..32 relativas à letra da fundamental quantizada."""
+    if not 1 <= quantos <= len(_GRAUS):
+        raise ValueError("grafia espectral requer de 1 a 32 parciais")
+    letras: tuple[ir.Letra, ...] = ("C", "D", "E", "F", "G", "A", "B")
+    base = letras.index(grafia(ir.Altura(midicents=parciais(fundamental, 1, microtom)[0]))[0])
+    return [letras[(base + grau) % 7] for grau in _GRAUS[:quantos]]
+
+
 def espectralizar(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], rng: random.Random) -> ir.MusicIR:
     """As alturas da seleção viram parciais da fundamental: cada parte recebe uma faixa do espectro (a de cima, os
     parciais altos; a de baixo, os graves) dentro da sua tessitura, e cada voz mantém o contorno (sobe onde subia,
     desce onde descia, repete onde repetia), com o salto limitado. Ritmo, pausas, dinâmicas e técnicas ficam."""
     atual = exigir(atual)
-    reservatorio = sorted(set(parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))))
+    alturas = parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))
+    letras = grafias_dos_parciais(p["fundamental"], int(p["parciais"]), int(p["microtom"]))
+    reservatorio = sorted(set(alturas))
+    grafias = dict(zip(alturas, letras))
     salto = int(p["salto_maximo"])
     com_altura = [parte for parte in atual.partes if _tessitura(parte) is None or len(set(_tessitura(parte))) == 2]
     faixas = {parte.id: _faixa(reservatorio, parte, k, len(com_altura)) for k, parte in enumerate(com_altura)}
@@ -33,7 +51,9 @@ def espectralizar(atual: ir.MusicIR | None, plano: Plano, p: dict[str, float], r
             return alvo
         faixa, cabem = faixas[parte.id]
         linha = _contorno([n.alturas[0].midicents for n in notas], faixa, cabem, salto)
-        novas = {n.id: com_alturas(n, _acorde(n, alto, cabem)) for n, alto in zip(notas, linha)}
+        novas = {n.id: n.model_copy(update={"alturas": [ir.Altura(midicents=a, grafia=grafias[a])
+                                                     for a in _acorde(n, alto, cabem)]})
+                 for n, alto in zip(notas, linha)}
         return [novas.get(e.id, e) for e in alvo]
 
     return por_voz(atual, plano.selecao, trecho)
