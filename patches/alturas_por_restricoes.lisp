@@ -8,7 +8,8 @@
 ;;;   NUM DEN            métrica
 ;;;   por voz: E n1 d1 n2 d2 ...   o ritmo fixo (E eventos; n/d da semibreve; n negativo = pausa)
 ;;;            D a1 a2 ...         as alturas possíveis da voz (midicents)
-;;; O ritmo de cada voz entra como domínio de um motivo só (fica travado); o solver escolhe as alturas.
+;;; O ritmo de cada voz entra como domínio de um motivo só (fica travado); o solver escolhe as alturas. As vozes
+;;; vêm de cima para baixo (ordem das partes na grade): é o que "sem cruzamento" supõe.
 ;;; Grava em <pasta>/saida.txt: V e, para cada voz, k seguido das k alturas das notas, na ordem; -1 se não houver
 ;;; solução. Em erro, -2 em saida.txt e a mensagem em erro.txt. Não contém código do Cluster Engine: só chamadas.
 ;;;
@@ -31,19 +32,30 @@
   (with-open-file (s (merge-pathnames nome pasta) :direction :output :if-exists :supersede :if-does-not-exist :create)
     (write-string texto s)))
 
-(defun muschat-ce-lista (x)
-  "As regras às vezes devolvem uma regra, às vezes uma lista delas."
-  (if (listp x) x (list x)))
-
 (defun muschat-ce-vozes (numeros v)
-  "-> lista de (ritmo dominio) e o resto dos números."
-  (values (loop repeat v
-                collect (let* ((e (pop numeros))
-                               (ritmo (loop repeat e collect (let ((n (pop numeros)) (d (pop numeros))) (/ n d))))
-                               (d (pop numeros)))
-                          (when (< (length numeros) d) (error "entrada.txt termina antes do domínio anunciado"))
-                          (list ritmo (loop repeat d collect (pop numeros)))))
-          numeros))
+  "-> lista de (ritmo dominio); sobra de números é erro (entrada inconsistente)."
+  (let ((vozes (loop repeat v
+                     collect (let* ((e (pop numeros))
+                                    (ritmo (loop repeat e collect (let ((n (pop numeros)) (d (pop numeros))) (/ n d))))
+                                    (d (pop numeros)))
+                               (when (< (length numeros) d) (error "entrada.txt termina antes do domínio anunciado"))
+                               (list ritmo (loop repeat d collect (pop numeros)))))))
+    (when numeros (error "entrada.txt tem ~D números a mais" (length numeros)))
+    vozes))
+
+(defun muschat-ce-ataques (ritmo)
+  (count-if #'plusp ritmo))
+
+;; As regras são funções globais com nome, nunca lambdas: o Cluster Engine compila cada regra, e o LispWorks não
+;; compila uma closure ("... is a lexical closure", visto no OM real). O salto vem por variável especial.
+(defvar *muschat-ce-salto* 1200)
+
+(defun muschat-ce-salto-ok (a b)
+  (<= (abs (- b a)) *muschat-ce-salto*))
+
+(defun muschat-ce-repete (a b)
+  "Heurística das notas comuns: peso 1 quando a altura se repete."
+  (if (= a b) 1 0))
 
 (defun muschat-ce-decrescente (alturas)
   "Sem cruzamento: as vozes vêm de cima para baixo; pausas (nil) não contam."
@@ -64,28 +76,28 @@
              (dominios (loop for (ritmo dominio) in vozes
                              append (list (list ritmo) (mapcar #'list dominio))))
              (todas (loop for i below v collect i))
+             (*muschat-ce-salto* salto)
              (regras
                (append
-                (muschat-ce-lista (cluster-engine::r-pitches-one-voice
-                                   #'(lambda (a b) (<= (abs (- b a)) salto)) todas :pitches))
+                ;; cada regra devolve uma lista de regras; a lista final tem de ser plana (filter-rules-from-input)
+                (cluster-engine::r-pitches-one-voice #'muschat-ce-salto-ok todas :pitches)
                 (when (and (= unissono 1) (> v 1))
-                  (muschat-ce-lista (cluster-engine::r-pitch-pitch
-                                     #'muschat-ce-sem-unissono todas '(0) :all :exclude-gracenotes :pitch)))
+                  (cluster-engine::r-pitch-pitch #'muschat-ce-sem-unissono todas '(0) :all :exclude-gracenotes :pitch))
                 (when (and (= cruzamento 1) (> v 1))
-                  (muschat-ce-lista (cluster-engine::r-pitch-pitch
-                                     #'muschat-ce-decrescente todas '(0) :all :exclude-gracenotes :pitch)))
+                  (cluster-engine::r-pitch-pitch #'muschat-ce-decrescente todas '(0) :all :exclude-gracenotes :pitch))
                 (when (= comuns 1)
-                  (muschat-ce-lista (cluster-engine::hr-pitches-one-voice
-                                     #'(lambda (a b) (if (= a b) 1 0)) todas :pitches)))))
+                  (cluster-engine::hr-pitches-one-voice #'muschat-ce-repete todas :pitches))))
              ;; rnd? = t: sem ele o solver escolhe sempre o primeiro candidato (as alturas mais graves)
-             (resultado (cluster-engine::clusterengine variaveis t nil regras (list metrica) dominios)))
+             ;; shortcut: uma métrica só (a do primeiro compasso); nenhuma regra lê a métrica, evoluir se alguma ler
+             (resultado (cluster-engine::clusterengine variaveis t nil regras (list metrica) dominios))
+             ;; sem solução o solver devolve uma solução parcial (não nil): falta altura em alguma voz
+             (alturas (loop for i below v collect (remove nil (flat (nth (1+ (* 2 i)) resultado)))))
+             (completa (loop for (ritmo nil) in vozes for a in alturas
+                             always (>= (length a) (muschat-ce-ataques ritmo)))))
         (muschat-ce-gravar
          pasta "saida.txt"
-         (if resultado
-             (format nil "~D~{ ~D~{ ~D~}~}~%" v
-                     (loop for i below v
-                           append (let ((alturas (remove nil (flat (nth (1+ (* 2 i)) resultado)))))
-                                    (list (length alturas) alturas))))
+         (if completa
+             (format nil "~D~{ ~D~{ ~D~}~}~%" v (loop for a in alturas append (list (length a) a)))
              (format nil "-1~%")))
         resultado)
     (error (e)

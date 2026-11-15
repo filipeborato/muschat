@@ -105,6 +105,7 @@ def _compassos(n: int) -> list[ir.Compasso]:
 
 # --- Cluster Engine: alturas por restrições sobre o ritmo existente ------------------------------------------------
 
+# shortcut: limite estimado, não medido; medir no OM real e ajustar
 LIMITE_ATAQUES_CE = 400  # ataques no trecho; acima disso a busca do Cluster Engine fica longa demais para o OM
 
 
@@ -128,8 +129,9 @@ def _vozes_ce(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | None
         if (sel.partes and parte.id not in sel.partes) or (tessitura and tessitura[0] == tessitura[1]):
             continue  # fora da seleção, ou percussão sem altura
         for voz in parte.vozes:
-            eventos = [e for e in voz.eventos if isinstance(e, (ir.Nota, ir.Pausa)) and ini <= e.inicio < fim
-                       and (not sel.vozes or voz.id in sel.vozes)]
+            if sel.vozes and voz.id not in sel.vozes:
+                continue
+            eventos = [e for e in voz.eventos if isinstance(e, (ir.Nota, ir.Pausa)) and ini <= e.inicio < fim]
             if not any(isinstance(e, ir.Nota) for e in eventos):
                 continue
             ritmo: list[Fraction] = []
@@ -163,10 +165,13 @@ def _ce_montar(p: dict[str, float], atual: ir.MusicIR | None, plano: Plano | Non
         raise ValueError(f"sem uníssono pede pelo menos {len(vozes)} alturas diferentes entre as vozes; nada enviado")
     if (ataques := sum(len(v.cadeias) for v in vozes)) > LIMITE_ATAQUES_CE:
         raise ValueError(f"{ataques} ataques no trecho; o limite é {LIMITE_ATAQUES_CE} (selecione menos compassos)")
-    atual, primeiro, _ = _trecho(atual, plano)
+    atual, primeiro, ultimo = _trecho(atual, plano)
     c = atual.compassos[primeiro - 1]
     regras = [int(p[k]) for k in ("salto_maximo", "sem_unissono", "sem_cruzamento", "notas_comuns")]
-    texto = f"{len(vozes)} {' '.join(map(str, regras))} {max(len(v.cadeias) for v in vozes) + 1}\n"
+    # o solver para quando QUALQUER motor chega a esse número de variáveis, inclusive o de compassos (um por
+    # compasso): com trecho esparso, poucos ataques e muitos compassos, ele pararia antes de dar todas as alturas
+    variaveis = max(max(len(v.cadeias) for v in vozes), ultimo - primeiro + 1) + 1
+    texto = f"{len(vozes)} {' '.join(map(str, regras))} {variaveis}\n"
     texto += f"{c.numerador} {c.denominador}\n"
     for v in vozes:
         texto += f"{len(v.ritmo)} " + " ".join(f"{d.numerator} {d.denominator}" for d in v.ritmo) + "\n"
@@ -653,7 +658,7 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         entrada="uma linha: parciais quadros",
         saida="saida.txt: N seguido de N trincas tempo (s) frequência (Hz) amplitude",
         passos=_passos("analise_supervp.lisp"),
-        montar=_supervp_montar, ler=_supervp_ler, autor="OpenMusic/OM-SuperVP"),
+        montar=_supervp_montar, ler=_supervp_ler, autor="OpenMusic/OM-SuperVP"),  # sem arquivo: SuperVP não disponível para validar o patch
     PatchAprovado(
         procedimento="alturas_por_restricoes", biblioteca="cluster-engine",
         funcao_om="ClusterEngine + R-pitches-one-voice, R-pitch-pitch, HR-pitches-one-voice",
@@ -664,5 +669,5 @@ PATCHES: dict[str, PatchAprovado] = {p.procedimento: p for p in [
         saida="saida.txt: V e, por voz, k seguido das k alturas das notas; -1 se não houver solução",
         passos=_passos("alturas_por_restricoes.lisp", " A busca pode levar alguns segundos."),
         montar=_ce_montar, ler=_ce_ler, autor="OpenMusic/Cluster Engine",
-        arquivo="patches/alturas_por_restricoes.lisp"),  # validado só depois de rodar no OM real (ticket 09)  # sem arquivo: SuperVP não disponível para validar o patch
+        arquivo="patches/alturas_por_restricoes.lisp"),  # validado só depois de rodar no OM real  # sem arquivo: SuperVP não disponível para validar o patch
 ]}

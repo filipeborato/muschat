@@ -381,3 +381,4 @@ def test_cluster_engine_acorde_segue_a_altura_principal_dentro_dos_parciais(tmp_
     r2 = retomar(c, "2 3 6000 6400 6700 1 3600")
     acorde = r2.versao.ir.partes[0].vozes[0].eventos[0].alturas
     assert [a.midicents for a in acorde] == [6000, 6700]  # 6000 + 700 cents: o parcial mais perto é 6700
+
