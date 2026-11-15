@@ -2,11 +2,12 @@
 events, and score pitches mapped onto harmonic partials while preserving melodic contour.
 """
 
-import math
 import random
 from fractions import Fraction
 
 from muschat.instruments import in_register, instrument, part_range
+from muschat.spectrum import partials as partials, hz_to_midicents, quantize
+from muschat.notation.spelling import partial_spellings as partial_spellings
 from muschat.plan import Plan
 from muschat.procedures.common import (
     DEFAULT_QUARTET,
@@ -16,29 +17,8 @@ from muschat.procedures.common import (
     require_score,
     split_event,
 )
-from muschat.score_ir import Event, Note, Part, Pitch, PitchLetter, Provenance, Rest, ScoreIR, SpectralFrame, Voice, spell_pitch
+from muschat.score_ir import Event, Note, Part, Pitch, Provenance, Rest, ScoreIR, SpectralFrame, Voice
 
-
-def partials(fundamental: float, count: int, microtone: int) -> list[int]:
-    """Return partials 1..n of `fundamental` (midicents), quantized to semitones, quarter-tones, or eighth-tones (0, 1, 2)."""
-    step = 100 // (2**microtone)
-    return [round((fundamental + 1200 * math.log2(n)) / step) * step for n in range(1, count + 1)]
-
-
-# Relative scale degrees: 1..16 conventional; 17..32 by proximity to just-intonation scale degrees.
-_DEGREES = (
-    0, 0, 4, 0, 2, 4, 6, 0, 1, 2, 3, 4, 5, 6, 6, 0,
-    1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 6, 0,
-)
-
-
-def partial_spellings(fundamental: float, count: int, microtone: int) -> list[PitchLetter]:
-    """Return pitch letters for partials 1..32 relative to the quantized fundamental's pitch letter."""
-    if not 1 <= count <= len(_DEGREES):
-        raise ValueError("spectral spelling requires between 1 and 32 partials")
-    letters: tuple[PitchLetter, ...] = ("C", "D", "E", "F", "G", "A", "B")
-    base = letters.index(spell_pitch(Pitch(midicents=partials(fundamental, 1, microtone)[0]))[0])  # type: ignore[arg-type]
-    return [letters[(base + degree) % 7] for degree in _DEGREES[:count]]
 
 
 def spectralize(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random) -> ScoreIR:
@@ -140,7 +120,6 @@ def events_from_spectrum(
     frames = sorted((e for _, _, e in current.events() if isinstance(e, SpectralFrame)), key=lambda e: e.start)
     if not frames:
         raise ValueError("events_from_spectrum requires spectral analysis data in the score (e.g. OM-SuperVP)")
-    step = 100 // (2 ** int(p["microtone"]))
     names = plan.instruments or DEFAULT_QUARTET
     grid, ids = MeasureGrid(current), IdGenerator(current)
     end = grid.ends[-1]
@@ -161,7 +140,7 @@ def events_from_spectrum(
                 events += _rests(ids.new_id(f"{pid}V1E"), cursor, frame.start - cursor, grid, ids)
             strongest = sorted(frame.partials, key=lambda x: -x.amplitude)[: int(p["pitches_per_frame"])]
             pitches = sorted(
-                (round((6900 + 1200 * math.log2(x.frequency / 440)) / step) * step for x in strongest),
+                (quantize(hz_to_midicents(x.frequency), int(p["microtone"])) for x in strongest),
                 reverse=True,
             )
             frame_end = min(frame.end, end)

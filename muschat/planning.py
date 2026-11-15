@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from google.genai import types
 from pydantic import ValidationError
 from muschat import prompts
+from muschat.history import recent_history, DEFAULT_HISTORY_MESSAGES
 from muschat.errors import RefusalError
 from muschat.instruments import FAMILIES, INSTRUMENTS
 from muschat.notation.techniques import TECHNIQUES, family_techniques, fits_instrument
@@ -34,6 +35,7 @@ def plan_composition(
     registry: Registry,
     mode: Mode = "auto",
     sections: list | None = None,
+    history_messages: int = DEFAULT_HISTORY_MESSAGES,
     retrying_route: bool = False,
     previous_plan: Plan | None = None,
     required_procedures: tuple[str, ...] = (),
@@ -50,7 +52,7 @@ def plan_composition(
     response = generator.generate_content(
         model=model,
         contents=[
-            *chat.get_history(),
+            *recent_history(chat, history_messages),
             types.Content(role="user", parts=[types.Part(text=text)]),
         ],
         config=types.GenerateContentConfig(
@@ -210,6 +212,7 @@ def plan_composition(
                     registry=registry,
                     mode=effective,
                     sections=sections,
+                    history_messages=history_messages,
                     retrying_route=True,
                     previous_plan=plan,
                     required_procedures=tuple(sorted(approved)),

@@ -1,6 +1,7 @@
 """Muschat: Streamlit chat UI."""
 
 import io
+import hashlib
 import os
 import re
 import zipfile
@@ -24,7 +25,7 @@ from muschat.config import (
 )
 from muschat.errors import error_message
 from muschat.export import FORMAT_LOSSES, experiment_json, metrics, to_midi, version_package
-from muschat.notagen import LocalNotaGen, NotaGenInstallation, detect_notagen
+from muschat.notagen import LocalNotaGen, PersistentNotaGen, NotaGenInstallation, detect_notagen
 from muschat.notation.lilypond import EngravingResult, LilyPondInstallation, detect_lilypond, engrave, to_lilypond
 from muschat.notation.musicxml import to_musicxml
 from muschat.notation.render import render_svg
@@ -122,30 +123,62 @@ with st.sidebar.expander("NotaGen — modelo local"):
         value=(cfg.notagen or (DEFAULT_NOTAGEN_PYTHON, DEFAULT_NOTAGEN_DIR))[1],
         key="notagen_dir",
     )
-    st.caption("Configuração desta sessão. Requer pesos instalados e GPU CUDA. Cada geração carrega o modelo.")
+    st.caption("Configuração desta sessão. Requer pesos instalados e GPU CUDA. O worker opcional reutiliza os pesos entre chamadas.")
 
 
 def _notagen() -> NotaGenInstallation | str | None:
-    return detect_notagen(notagen_python, notagen_dir) if notagen_enabled else None
+    key = (notagen_enabled, notagen_python, notagen_dir)
+    cache = st.session_state.setdefault("notagen_detection", {})
+    if key not in cache:
+        cache[key] = detect_notagen(notagen_python, notagen_dir) if notagen_enabled else None
+    return cache[key]
 
 
 def _composer() -> LocalNotaGen | None:
-    return LocalNotaGen(n) if isinstance(n := _notagen(), NotaGenInstallation) else None
+    installation = _notagen()
+    if not isinstance(installation, NotaGenInstallation):
+        return None
+    key = (installation, cfg.notagen_worker, cfg.notagen_idle_timeout)
+    previous = st.session_state.get("composer_backend")
+    if previous is not None and previous[0] == key:
+        return previous[1]
+    if previous is not None and isinstance(previous[1], PersistentNotaGen):
+        previous[1].close()
+    backend = PersistentNotaGen(installation, idle_timeout=cfg.notagen_idle_timeout) if cfg.notagen_worker else LocalNotaGen(installation)
+    st.session_state.composer_backend = (key, backend)
+    return backend
 
 
 def _registry(openmusic_enabled: bool = cfg.openmusic_enabled) -> Registry:
+    key = (openmusic_enabled, notagen_enabled, notagen_python, notagen_dir,
+           os.environ.get("OPENMUSIC"), os.environ.get("LILYPOND"), os.environ.get("CSOUND"), os.environ.get("PATH"))
+    cache = st.session_state.setdefault("capability_cache", {})
+    if key in cache:
+        return cache[key]
     try:
         abjad_version: str | None = version("abjad")
     except PackageNotFoundError:
         abjad_version = None
-    return detect_registry(
+    registry = detect_registry(
         lilypond=_lilypond(os.environ.get("LILYPOND")),
         openmusic=(detect_openmusic(os.environ.get("OPENMUSIC")) if openmusic_enabled else None),
         abjad_version=abjad_version,
         openmusic_enabled=openmusic_enabled,
         notagen=_notagen(),
     )
+    cache[key] = registry
+    return registry
 
+
+if st.sidebar.button("Redetectar ferramentas"):
+    previous = st.session_state.pop("composer_backend", None)
+    if previous is not None and isinstance(previous[1], PersistentNotaGen):
+        previous[1].close()
+    st.session_state.pop("capability_cache", None)
+    st.session_state.pop("notagen_detection", None)
+    st.session_state.pop("export_cache", None)
+    _lilypond.clear()
+    st.session_state["tool_detection_revision"] = st.session_state.get("tool_detection_revision", 0) + 1
 
 _ICON = {"automatic": "🟢", "file_exchange": "🟡", "manual": "🟠", "unavailable": "⚪"}
 
@@ -358,6 +391,24 @@ def _detected_engines() -> dict[str, str]:
     }
 
 
+def _score_artifacts(ir: ScoreIR, transposed: bool):
+    key = (hashlib.sha256(ir.model_dump_json().encode()).hexdigest(), transposed,
+           os.environ.get("LILYPOND"), st.session_state.get("tool_detection_revision", 0))
+    cache = st.session_state.setdefault("export_cache", {})
+    if key not in cache:
+        try:
+            lilypond = to_lilypond(ir, transposed=transposed)
+        except ValueError:
+            lilypond = {}
+        engraving = _engrave(tuple(lilypond.items()), os.environ.get("LILYPOND"), st.session_state.get("tool_detection_revision", 0)) if lilypond else None
+        musicxml = to_musicxml(ir, transposed=transposed)
+        cache[key] = (musicxml, to_midi(ir), lilypond, engraving,
+                      None if engraving and engraving.pdfs else _svg(musicxml))
+        if len(cache) > 16:
+            del cache[next(iter(cache))]
+    return cache[key]
+
+
 def _export_panel(c: Composition):
     """Downloads for the current Version, each declaring what the format loses."""
     assert c.current is not None and c.index is not None
@@ -365,11 +416,7 @@ def _export_panel(c: Composition):
     engines = _detected_engines()
     with st.popover("Exportar", width="stretch"):
         transposed = st.checkbox("Grade transposta", value=False, key="transposed-score")
-        lilypond = version_score_view(c.current).lilypond
-        if transposed and lilypond:
-            lilypond = to_lilypond(ir, transposed=True)
-        engraving = _engrave(tuple(lilypond.items())) if lilypond else None
-        svg = None if engraving and engraving.pdfs else _svg(to_musicxml(ir, transposed=transposed))
+        musicxml, midi, lilypond, engraving, svg = _score_artifacts(ir, transposed)
         st.download_button(
             "composição completa (.zip)",
             file_name=f"{name}.zip",
@@ -393,7 +440,7 @@ def _export_panel(c: Composition):
         )
         st.download_button(
             "MusicXML",
-            data=lambda: to_musicxml(ir, transposed=transposed),
+            data=musicxml,
             file_name=f"{name}.musicxml",
             mime="application/vnd.recordare.musicxml+xml",
             on_click="ignore",
@@ -402,7 +449,7 @@ def _export_panel(c: Composition):
         st.caption(FORMAT_LOSSES["musicxml"])
         st.download_button(
             "MIDI",
-            data=lambda: to_midi(ir),
+            data=midi,
             file_name=f"{name}.mid",
             mime="audio/midi",
             on_click="ignore",
@@ -459,8 +506,8 @@ def _svg(musicxml: str) -> str | None:
 
 
 @st.cache_data(max_entries=16, show_spinner="Gravando a partitura com o LilyPond...")
-def _engrave(sources: tuple[tuple[str, str], ...]) -> EngravingResult:
-    return engrave(dict(sources), _lilypond(os.environ.get("LILYPOND")))
+def _engrave(sources: tuple[tuple[str, str], ...], configured: str | None = None, revision: int = 0) -> EngravingResult:
+    return engrave(dict(sources), _lilypond(configured or os.environ.get("LILYPOND")))
 
 
 def _safe_filename(text: str) -> str:
@@ -471,7 +518,7 @@ def _render_scores(scores: list[dict], key: str):
     for i, s in enumerate(scores):
         st.caption(s["caption"])
         name = _safe_filename(s["title"])
-        engraving = _engrave(tuple(s["lilypond"].items())) if s.get("lilypond") else None
+        engraving = _engrave(tuple(s["lilypond"].items()), os.environ.get("LILYPOND"), st.session_state.get("tool_detection_revision", 0)) if s.get("lilypond") else None
         if engraving and engraving.svgs:
             for page in engraving.svgs:
                 st.image(page, width="stretch")
@@ -543,6 +590,7 @@ if question := st.chat_input("Pergunte sobre técnicas estendidas, eletroacústi
                     chat=st.session_state.chat,
                     retriever=retriever,
                     model=cfg.model,
+                    history_messages=cfg.history_messages,
                     composition=st.session_state.composition,
                     mode=st.session_state.mode,
                     registry=_registry(),

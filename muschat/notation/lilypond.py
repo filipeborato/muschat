@@ -5,7 +5,6 @@ and spectral data have no staff notation and are omitted, just as in MusicXML.
 """
 
 import glob
-import math
 import os
 import re
 import shutil
@@ -19,9 +18,10 @@ from typing import Protocol
 import abjad
 
 from muschat.instruments import instrument as get_instrument, transposition
-from muschat.notation.musicxml import spell_pitch
+from muschat.notation.spelling import spell_pitch
+from muschat.notation.timeline import timeline
 from muschat.notation.techniques import VoiceDirections, get_technique
-from muschat.score_ir import Measure, Note, Part, Pitch, Rest, ScoreIR, Tuplet, Voice, slices, ties_to
+from muschat.score_ir import Measure, Note, Part, Pitch, Rest, ScoreIR, Voice
 
 MIN_VERSION = (2, 25, 26)  # required by Abjad 3.31
 _CLEFS = {"treble": "treble", "bass": "bass", "alto": "alto", "tenor": "tenor", "percussion": "percussion"}
@@ -136,17 +136,7 @@ def _voice(
     fill_with_rests: bool,
     interval: tuple[int, int, int],
 ) -> tuple[abjad.Voice, dict[Fraction, abjad.Leaf]]:
-    events = [e for e in voice.events if isinstance(e, (Note, Rest))]
     groups = {t.id: t for t in voice.tuplets}
-    chains: dict[str, list[str]] = {}
-    for t in voice.tuplets:
-        chain: list[str] = []
-        g: Tuplet | None = t
-        while g is not None:
-            chain.insert(0, g.id)
-            g = groups[g.parent] if g.parent else None
-        for i in t.events:
-            chains[i] = chain
     abjad_voice = abjad.Voice(name=voice.id)
     stack: list[tuple[str, abjad.Tuplet]] = []
     leaves: dict[Fraction, abjad.Leaf] = {}
@@ -162,38 +152,16 @@ def _voice(
         (stack[-1][1] if stack else abjad_voice).append(leaf)
         leaves.setdefault(offset, leaf)
 
-    def gap(start: Fraction, stop: Fraction) -> None:
-        for offset, d in slices(offsets, start, stop - start) if stop > start else []:
-            duration = abjad.Duration(d.numerator, d.denominator)
-            place(
-                abjad.Rest.from_duration(duration) if fill_with_rests else abjad.Skip.from_duration(duration),
-                offset,
-                [],
-            )
-
-    cursor = Fraction(0)
-    for k, e in enumerate(events):
-        gap(cursor, e.start)
-        chain = chains.get(e.id, [])
-        ratio = math.prod(
-            (Fraction(groups[g].numerator, groups[g].denominator) for g in chain),
-            start=Fraction(1),
-        )
-        next_ev = events[k + 1] if k + 1 < len(events) else None
-        place(
-            _leaf(
-                e,
-                e.duration * ratio,
-                directions,
-                interval=interval,
-                glissando=isinstance(next_ev, Note),
-                tied=isinstance(e, Note) and ties_to(e, next_ev),
-            ),
-            e.start,
-            chain,
-        )
-        cursor = e.end
-    gap(cursor, end)
+    for item in timeline(voice, offsets, end):
+        e = item.event
+        chain = [g.id for g in item.chain]
+        if e is None:
+            notated = item.duration * item.ratio
+            duration = abjad.Duration(notated.numerator, notated.denominator)
+            place(abjad.Rest.from_duration(duration) if fill_with_rests else abjad.Skip.from_duration(duration), item.start, chain)
+        else:
+            place(_leaf(e, item.duration * item.ratio, directions, interval=interval,
+                        glissando=item.glissando_start, tied=item.tie_start), item.start, chain)
     return abjad_voice, leaves
 
 

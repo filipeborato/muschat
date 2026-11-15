@@ -3,6 +3,7 @@
 import random
 from fractions import Fraction as F
 
+from muschat.spectrum import quantize
 from muschat.instruments import in_register, part_range
 from muschat.plan import Plan
 from muschat.procedures.common import (
@@ -59,7 +60,7 @@ def micropolyphony(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng
         k = destinations.index((part.id, voice.id))
         delay = F(int(p["offset"]) * k, 16)
         factor = F(16 + rng.randint(-int(p["variation"]), int(p["variation"])), 16)
-        shift = round((k / max(len(destinations) - 1, 1) - 0.5) * p["spread"] / 25) * 25
+        shift = quantize((k / max(len(destinations) - 1, 1) - 0.5) * p["spread"], 2)
         output: list[Event] = []
         cursor = start_pos
         for e in events:

@@ -4,9 +4,9 @@ import random
 from collections.abc import Callable
 from fractions import Fraction
 
+from muschat.spectrum import quantize
 from muschat.plan import Plan, Selection
 from muschat.procedures.common import (
-    DYNAMICS,
     IdGenerator,
     MeasureGrid,
     by_measure,
@@ -139,7 +139,7 @@ def progressive_register(
 
         def shift(e: Note) -> Note:
             t = float((e.start - start_pos) / (last_attack - start_pos)) if last_attack > start_pos else 0.0
-            n = round((p["start"] + (p["end"] - p["start"]) * t) / 50) * 50
+            n = quantize(p["start"] + (p["end"] - p["start"]) * t, 1)
             return with_pitches(e, [a.midicents + n for a in e.pitches])
 
         return [shift(e) if isinstance(e, Note) else e for e in target]
@@ -154,17 +154,8 @@ def progressive_dynamics(
     current = require_score(current)
     first, last = MeasureGrid(current).span(plan.selection)
 
-    def transform_measure(part: Part, voice: Voice, group: list[Event], n: int) -> list[Event]:
-        level = DYNAMICS[round(interpolate(p["start"], p["end"], n, first, last))]
-        first_id = next((e.id for e in group if isinstance(e, Note)), None)
-        return [
-            e.model_copy(update={"dynamic": level if e.id == first_id else None})
-            if isinstance(e, (Note, Rest))
-            else e
-            for e in group
-        ]
-
-    return by_measure(current, plan.selection, transform_measure)
+    from muschat.dynamics import dynamics_by_measure
+    return dynamics_by_measure(current, plan.selection, lambda n: interpolate(p["start"], p["end"], n, first, last))
 
 
 def gestural_techniques(

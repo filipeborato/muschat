@@ -3,6 +3,7 @@
 import random
 from collections.abc import Callable
 
+from muschat.spectrum import quantize
 from muschat.plan import Plan
 from muschat.procedures.common import by_voice, require_score, with_pitches
 from muschat.score_ir import Event, Note, Part, ScoreIR, Voice
@@ -48,6 +49,6 @@ def rotate(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random
 def scale_intervals(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random) -> ScoreIR:
     def scale(seq: Sequence) -> Sequence:
         base = seq[0][0]
-        return [[base + round((a - base) * p["factor"] / 50) * 50 for a in chord] for chord in seq]
+        return [[base + quantize((a - base) * p["factor"], 1) for a in chord] for chord in seq]
 
     return _over_sequence(current, plan, scale)

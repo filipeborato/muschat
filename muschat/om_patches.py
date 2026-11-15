@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
-from muschat.audio import find_csound, render_csound
+from muschat.audio import find_csound as find_csound, render_csound as render_csound
+from muschat.spectrum import midicents_to_hz, quantize
+from muschat.dynamics import dynamics_by_measure
 from muschat.constraints import Constraint, check_constraints
 from muschat.instruments import instrument, part_range
 from muschat.plan import Plan
 from muschat.procedures.common import (
     DEFAULT_QUARTET,
-    DYNAMICS,
     IdGenerator,
     MeasureGrid,
     by_measure,
@@ -151,9 +152,8 @@ def _series_output(values: list[float], ctx: PatchContext) -> ScoreIR:
     _check_count(values, int(ctx.parameters["partials"]))
     if out_of_bounds := [v for v in values if not 0 <= v <= 12700]:
         raise ValueError(f"values outside 0–12700 midicents: {out_of_bounds[:5]}")
-    step = 100 // (2 ** int(ctx.parameters.get("microtone", 1)))
     score = material_score(
-        [round(v / step) * step for v in values],
+        [quantize(v, int(ctx.parameters.get("microtone", 1))) for v in values],
         title=f"Harmonic series on {ctx.parameters['fundamental']:.0f} mc (OpenMusic)",
         provenance=ctx.provenance,
     )
@@ -212,7 +212,7 @@ def _apply_chaos_density(base: ScoreIR, plan: Plan, target: TargetFn, rng: rando
 
 def _apply_chaos_register(base: ScoreIR, plan: Plan, target: TargetFn, _rng: random.Random) -> ScoreIR:
     def transform_measure(part: Part, voice: Voice, group: list[Event], n: int) -> list[Event]:
-        shift = round(target(n) / 50) * 50
+        shift = quantize(target(n), 1)
         return [
             with_pitches(e, [a.midicents + shift for a in e.pitches]) if isinstance(e, Note) else e
             for e in group
@@ -222,17 +222,7 @@ def _apply_chaos_register(base: ScoreIR, plan: Plan, target: TargetFn, _rng: ran
 
 
 def _apply_chaos_dynamics(base: ScoreIR, plan: Plan, target: TargetFn, _rng: random.Random) -> ScoreIR:
-    def transform_measure(part: Part, voice: Voice, group: list[Event], n: int) -> list[Event]:
-        level = DYNAMICS[min(9, max(0, round(target(n))))]
-        first_id = next((e.id for e in group if isinstance(e, Note)), None)
-        return [
-            e.model_copy(update={"dynamic": level if e.id == first_id else None})
-            if isinstance(e, (Note, Rest))
-            else e
-            for e in group
-        ]
-
-    return by_measure(base, plan.selection, transform_measure)
+    return dynamics_by_measure(base, plan.selection, target)
 
 
 def _apply_chaos_durations(base: ScoreIR, plan: Plan, target: TargetFn, _rng: random.Random) -> ScoreIR:
@@ -551,10 +541,6 @@ def _cluster_output(values: list[float], ctx: PatchContext) -> ScoreIR:
 
 # --- OMChroma + om2csound: additive synthesis ------------------------------------------------------------------------
 
-def _hz(midicents: int) -> float:
-    return 440.0 * (2 ** ((midicents - 6900) / 1200))
-
-
 def _seconds_per_whole(current: ScoreIR) -> float:
     bpm = next((m.tempo for m in current.measures if m.tempo), 60)
     return 4 * 60 / bpm
@@ -589,7 +575,7 @@ def components(
     for n in notes:
         k = _partials_at(p, n.start, total)
         for a in n.pitches:
-            f0 = _hz(a.midicents)
+            f0 = midicents_to_hz(a.midicents)
             for j in range(1, k + 1):
                 if f0 * j < 20000:
                     output.append(

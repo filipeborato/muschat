@@ -93,3 +93,13 @@ def test_structural_validation_rejects_noncontiguous_tuplet():
     ]
     with pytest.raises(RefusalError, match="contiguous notated events"):
         validate_ir(ir)
+
+
+def test_shared_spectrum_preserves_acoustic_and_quantized_values():
+    from muschat.spectrum import hz_to_midicents, midicents_to_hz, partials, quantize
+
+    assert midicents_to_hz(6900) == 440
+    assert hz_to_midicents(880) == 8100
+    assert partials(3600, 4, 0) == [3600, 4800, 5500, 6000]
+    assert partials(3600, 4, 1) == [3600, 4800, 5500, 6000]
+    assert quantize(5535, 2) == 5525

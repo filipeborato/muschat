@@ -1,5 +1,6 @@
 """Pitch deviation, idiomatic noise substitution, and rarefaction of existing material."""
 
+from muschat.spectrum import partials, quantize, quantization_step
 import math
 import random
 from fractions import Fraction as F
@@ -34,7 +35,8 @@ OPEN_STRINGS: dict[str, tuple[int, ...]] = {
 
 def detune(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random) -> ScoreIR:
     current = require_score(current)
-    step = 50 if p["resolution"] == 1 else 25
+    microtone = 1 if p["resolution"] == 1 else 2
+    step = quantization_step(microtone)
     amplitude = math.floor(p["deviation"] / step) * step
 
     def transform_span(part: Part, voice: Voice, target: list[Event]) -> list[Event]:
@@ -70,7 +72,7 @@ def detune(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random
                 continue
             t = float((attacks[note.id] - start) / (end - start)) if end > start else 0.0
             curve = t if p["curve"] == 0 else math.sin(2 * math.pi * t)
-            shift = round(amplitude * curve / step) * step
+            shift = quantize(amplitude * curve, microtone)
             min_shift = max(
                 -amplitude, math.ceil((reg[0] - min(a.midicents for a in note.pitches)) / step) * step
             )
@@ -164,7 +166,7 @@ def rarefy(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random
                     if strings:
                         # shortcut: standard tuning, partials 2–8; extend for scordatura when string model exists.
                         naturals = sorted(
-                            {round((c + 1200 * math.log2(h)) / 25) * 25 for c in strings for h in range(2, 9)}
+                            {pitch for c in strings for pitch in partials(c, 8, 2)[1:]}
                         )
                         candidates = [
                             copy.model_copy(update={"pitches": [Pitch(midicents=a)], "techniques": ["harmonic"]})
@@ -184,7 +186,8 @@ def rarefy(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random
                     copy = copy.model_copy(update={"techniques": [*copy.techniques, "accent"]})
                 pieces: list[Event] = []
                 if n.id in in_tuplet:
-                    factor, group_id = F(1), in_tuplet[n.id]
+                    factor = F(1)
+                    group_id: str | None = in_tuplet[n.id]
                     while group_id is not None:
                         q = by_id[group_id]
                         factor *= F(q.denominator, q.numerator)

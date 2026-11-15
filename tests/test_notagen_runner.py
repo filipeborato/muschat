@@ -76,3 +76,14 @@ def test_context_rollover_diagnostic_does_not_split_music_row():
     result = generate_measures(module, "Classical", "Mozart", "Chamber", 1)
     assert "Stream generating" not in result
     assert "V:1\nC4|" in result and "V:2\nE4|" in result
+
+
+def test_worker_loads_native_runtime_before_starting_ipc_readers(tmp_path, monkeypatch):
+    import services.notagen_generate as runner
+
+    order = []
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--worker", str(tmp_path), "1"])
+    monkeypatch.setattr(runner, "load_runtime", lambda directory: order.append("runtime"))
+    monkeypatch.setattr(runner, "serve_requests", lambda render, idle: order.append("ipc"))
+    runner.main()
+    assert order == ["runtime", "ipc"]

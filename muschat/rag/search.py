@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 from rank_bm25 import BM25Okapi
 
+from muschat.instruments import identify
 from muschat.rag.index import VERSION, Embedder, Index, load_index, normalize
 from muschat.rag.readers import Chunk, family_of
 from muschat.reasoning import Excerpt, NullRetriever, Retriever
@@ -56,7 +57,7 @@ class HybridRetriever:
 
         target_families = {f for f in (family_of(x) for x in instruments) if f}
         for i in scores:
-            if self._index.chunks[i].family in target_families:
+            if (family_of(self._index.chunks[i].family) or self._index.chunks[i].family) in target_families:
                 scores[i] *= FAMILY_BOOST
         ranking = sorted(scores, key=lambda i: -scores[i])
         return self._assemble(ranking, scores, origins, k)
@@ -66,6 +67,12 @@ class HybridRetriever:
         return [int(i) for i in np.argsort(-sims)[: self._per_list] if sims[i] > 0]
 
     def _lexical(self, query: str) -> list[int]:
+        try:
+            canonical = identify(query)
+        except ValueError:
+            canonical = ""
+        if canonical and canonical not in query.lower():
+            query += " " + canonical
         bm25_scores = self._bm25.get_scores(tokenize(query))
         return [int(i) for i in np.argsort(-bm25_scores)[: self._per_list] if bm25_scores[i] > 0]
 

@@ -367,24 +367,9 @@ _DEFAULT_LETTERS = "C C D D E F F G G A A B".split()
 
 
 def spell_pitch(pitch: Pitch, interval: tuple[int, int, int] = (0, 0, 0)) -> tuple[str, Fraction, int]:
-    """Return (step, alteration in semitones, octave); preserves `pitch.spelling` when within 2 semitones."""
-    n = Fraction(pitch.midicents, 100)
-    letter: str | None = pitch.spelling
-    if letter is not None:
-        octave = round((n - PITCH_CLASS[letter]) / 12) - 1
-        if abs(n - 12 * (octave + 1) - PITCH_CLASS[letter]) > 2:
-            letter = None
-    if letter is None:
-        semitone = round(Fraction(pitch.midicents, 50)) * 50 // 100
-        letter, octave = _DEFAULT_LETTERS[semitone % 12], semitone // 12 - 1
-    diatonic, chromatic, octaves = interval
-    octave, index = divmod(7 * octave + "CDEFGAB".index(letter) - diatonic - 7 * octaves, 7)
-    letter = "CDEFGAB"[index]
-    n -= chromatic + 12 * octaves
-    if abs(n - 12 * (octave + 1) - PITCH_CLASS[letter]) > 2:
-        semitone = round(n * 2) // 2
-        letter, octave = _DEFAULT_LETTERS[semitone % 12], semitone // 12 - 1
-    return letter, n - 12 * (octave + 1) - PITCH_CLASS[letter], octave
+    """Compatibility entry point for shared notation spelling."""
+    from muschat.notation.spelling import spell_pitch as spell
+    return spell(pitch, interval)
 
 
 _LEGACY_EVENT_KIND = {

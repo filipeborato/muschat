@@ -21,6 +21,9 @@ class Config:
     embed_model: str
     openmusic_enabled: bool = False
     notagen: tuple[str, str] | None = None  # (NotaGen python executable, repo directory); None = disabled
+    history_messages: int = 12
+    notagen_worker: bool = False
+    notagen_idle_timeout: float = 60
 
 
 def _read(name: str, env: Mapping, secrets: Mapping) -> str:
@@ -31,8 +34,15 @@ def load_config(env: Mapping, secrets: Mapping) -> Config:
     api_key = _read("GEMINI_API_KEY", env, secrets)
     if not api_key:
         raise MissingApiKeyError("GEMINI_API_KEY is not configured.")
+    history_messages = int(_read("MUSCHAT_HISTORY_MESSAGES", env, secrets) or "12")
+    idle_timeout = float(_read("MUSCHAT_NOTAGEN_IDLE_TIMEOUT", env, secrets) or "60")
+    if history_messages < 0 or not 0 < idle_timeout < float("inf"):
+        raise ValueError("History window must be nonnegative and worker idle timeout must be finite and positive")
     return Config(
         api_key=api_key,
+        history_messages=history_messages,
+        notagen_worker=_read("MUSCHAT_NOTAGEN_WORKER", env, secrets) == "1",
+        notagen_idle_timeout=idle_timeout,
         openmusic_enabled=_read("MUSCHAT_OPENMUSIC", env, secrets) == "1",
         model=_read("GEMINI_MODEL", env, secrets) or DEFAULT_MODEL,
         embed_model=_read("GEMINI_EMBED_MODEL", env, secrets) or DEFAULT_EMBED_MODEL,

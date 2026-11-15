@@ -153,3 +153,19 @@ def test_api_exception_propagates():
     log, g, c, r = _setup(analysis=RuntimeError("api down"))
     with pytest.raises(RuntimeError, match="api down"):
         _respond("how to notate sul ponticello?", g, c, r)
+
+
+def test_pure_composition_skips_retrieval_and_bounds_analyzer_and_planner_history():
+    from muschat.composition import Composition
+    from tests.test_composition import FakeGenerator as Plans, _plan
+
+    log = []
+    history = [f"message {i}" for i in range(20)]
+    chat = FakeChat(log, history)
+    generator = Plans({**ANALYSIS_OK, "notation": "compose"}, _plan())
+    retriever = FakeRetriever(log)
+    response = respond("compose", generator=generator, chat=chat, retriever=retriever, model="m", composition=Composition(), history_messages=4)
+    assert response.scores and retriever.queries is None and "search" not in log
+    assert generator.calls[0].contents[:-1] == history[-4:]
+    assert generator.calls[1].contents[:-1] == history[-4:]
+    assert chat.history == history

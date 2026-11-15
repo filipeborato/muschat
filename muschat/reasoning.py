@@ -10,6 +10,7 @@ from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
 from muschat import prompts
+from muschat.history import recent_history, DEFAULT_HISTORY_MESSAGES
 from muschat.composition import Composition, Version
 from muschat.notagen import ComposerBackend
 from muschat.notation.lilypond import to_lilypond
@@ -132,6 +133,7 @@ def respond(
     retriever: Retriever,
     model: str,
     k: int = 6,
+    history_messages: int = DEFAULT_HISTORY_MESSAGES,
     composition: Composition | None = None,
     mode: Mode = "auto",
     registry: Registry | None = None,
@@ -167,11 +169,11 @@ def respond(
         )
     safe_question = _sanitize(question)
 
-    analysis = _analyze(safe_question, generator=generator, chat=chat, model=model)
+    analysis = _analyze(safe_question, generator=generator, chat=chat, model=model, history_messages=history_messages)
     if not analysis.in_scope:
         return Response(prompts.REFUSAL, analysis.model_dump(), [], out_of_scope=True)
 
-    excerpts = retriever.search(analysis.queries, k, analysis.instruments)
+    excerpts = [] if analysis.notation == "compose" else retriever.search(analysis.queries, k, analysis.instruments)
     operation = "none"
     if analysis.notation == "compose":
         composition = composition if composition is not None else Composition()
@@ -184,6 +186,7 @@ def respond(
             mode=mode,
             registry=registry,
             composer=composer,
+            history_messages=history_messages,
         )
         operation = result.summary
         scores = [version_score_view(result.version)] if result.version else []
@@ -272,7 +275,7 @@ def _generate_score(
     try:
         reply = generator.generate_content(
             model=model,
-            contents=[*chat.get_history(), request],
+            contents=[*recent_history(chat), request],
             config=types.GenerateContentConfig(
                 system_instruction=prompts.NOTATION.format(techniques=", ".join(TECHNIQUES)),
                 temperature=0.4,
@@ -289,14 +292,14 @@ def _generate_score(
     return ScoreView(example.title, to_musicxml(to_score_ir(example)), GENERATED_CAPTION, "generated")
 
 
-def _analyze(question: str, *, generator: Generator, chat: ChatSession, model: str) -> Analysis:
+def _analyze(question: str, *, generator: Generator, chat: ChatSession, model: str, history_messages: int = DEFAULT_HISTORY_MESSAGES) -> Analysis:
     request = types.Content(
         role="user",
         parts=[types.Part(text=f"<user_question>\n{question}\n</user_question>")],
     )
     reply = generator.generate_content(
         model=model,
-        contents=[*chat.get_history(), request],
+        contents=[*recent_history(chat, history_messages), request],
         config=types.GenerateContentConfig(
             system_instruction=prompts.ANALYSIS,
             temperature=0.2,

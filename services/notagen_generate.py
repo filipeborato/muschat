@@ -1,6 +1,11 @@
 """Isolated NotaGen-X runner: executed in the `.venv-notagen` interpreter (ADR 0002) and writes MusicXML to disk."""
 
 from contextlib import redirect_stdout
+import math
+import json
+import queue
+import threading
+from collections.abc import Callable
 import os
 import random
 import re
@@ -87,20 +92,27 @@ def to_voice_blocks(abc: str) -> str:
     return "\n".join(header) + "\n"
 
 
-def main() -> None:
-    notagen_dir, condition, measures_str, seed_str, output_path = sys.argv[1:6]
-    measures, seed = int(measures_str), int(seed_str)
-    notagen_dir = str(Path(notagen_dir).resolve())
-    output_path = str(Path(output_path).resolve())
-    gradio_dir = Path(notagen_dir) / "gradio"
+def load_runtime(notagen_dir: str):
+    """Load native libraries and model on the main thread before starting IPC readers."""
+    root = Path(notagen_dir).resolve()
+    gradio_dir = root / "gradio"
     os.chdir(gradio_dir)
-    sys.path.insert(0, str(gradio_dir))
-    sys.path.insert(0, str(Path(notagen_dir)))
+    for folder in (root, gradio_dir):
+        if str(folder) not in sys.path:
+            sys.path.insert(0, str(folder))
+    with redirect_stdout(sys.stderr):
+        import numpy as np
+        import torch
+        import inference
+        import music21
+    return np, torch, inference, music21
 
-    import numpy as np
-    import torch
-    import inference
-    import music21
+
+def render_request(
+    notagen_dir: str, condition: str, measures: int, seed: int, output_path: str
+) -> None:
+    output_path = str(Path(output_path).resolve())
+    np, torch, inference, music21 = load_runtime(notagen_dir)
 
     random.seed(seed)
     np.random.seed(seed % (2**32))
@@ -114,6 +126,55 @@ def main() -> None:
     )
     score = music21.converter.parse(abc_output, format="abc")
     score.write("musicxml", fp=output_path)
+
+
+def serve_requests(render: Callable[[dict], None], idle_timeout: float) -> None:
+    """Read one JSON request per line; release model memory by exiting after idle timeout."""
+    if not math.isfinite(idle_timeout) or idle_timeout <= 0:
+        raise ValueError("worker idle timeout must be finite and positive")
+    requests: queue.Queue[str | None] = queue.Queue()
+
+    def read() -> None:
+        for line in sys.stdin:
+            requests.put(line)
+        requests.put(None)
+
+    threading.Thread(target=read, daemon=True).start()
+    while True:
+        try:
+            line = requests.get(timeout=idle_timeout)
+        except queue.Empty:
+            return
+        if line is None:
+            return
+        try:
+            request = json.loads(line)
+            with redirect_stdout(sys.stderr):
+                render(request)
+            response: dict[str, object] = {"ok": True}
+        except Exception as exc:
+            response = {"ok": False, "error": str(exc)}
+        print(json.dumps(response), flush=True)
+
+
+def main() -> None:
+    if sys.argv[1] == "--worker":
+        directory, idle = sys.argv[2:4]
+        directory = str(Path(directory).resolve())
+        load_runtime(directory)
+        serve_requests(
+            lambda r: render_request(
+                directory,
+                r["condition"],
+                int(r["measures"]),
+                int(r["seed"]),
+                r["output"],
+            ),
+            float(idle),
+        )
+    else:
+        directory, condition, measures, seed, output = sys.argv[1:6]
+        render_request(directory, condition, int(measures), int(seed), output)
 
 
 if __name__ == "__main__":

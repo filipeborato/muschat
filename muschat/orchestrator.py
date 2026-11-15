@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 
+from muschat.history import DEFAULT_HISTORY_MESSAGES
 from muschat.execution import StepCompleted, StepPaused, execute_step
 from muschat.errors import RefusalError
 from muschat.planning import (
@@ -72,6 +73,7 @@ def compose(
     chat: "ChatSession",
     model: str,
     mode: Mode = "auto",
+    history_messages: int = DEFAULT_HISTORY_MESSAGES,
     registry: Registry | None = None,
     catalog: dict[str, Procedure] = CATALOG,
     tasks_dir: Path = TASKS_DIR,
@@ -98,6 +100,7 @@ def compose(
             registry=registry,
             mode=mode,
             sections=plan_sections,
+            history_messages=history_messages,
         )
     except (RefusalError, ValueError) as exc:
         return _refusal(exc)

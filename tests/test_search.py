@@ -166,3 +166,21 @@ def test_open_retriever_rejects_older_index_version(tmp_path):
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     retriever, warning = open_retriever(tmp_path, FixedEmbedder({}), "emb-x")
     assert isinstance(retriever, NullRetriever) and warning is not None and "re-ingest" in warning
+
+
+def test_rag_families_follow_canonical_instruments_and_preserve_corpus_categories():
+    from muschat.rag.readers import family_of
+
+    assert family_of("harpa") == "harp"
+    assert family_of("piano") == "keyboard"
+    assert family_of("viol\u00e3o") == "guitar"
+    assert family_of("corno ingl\u00eas") == "woodwinds"
+    assert family_of("eletroac\u00fastica") == "electroacoustic"
+    assert family_of("orquestra") == "orchestra"
+    assert family_of("m\u00fasica de c\u00e2mara") == "chamber"
+
+
+def test_bilingual_instrument_queries_get_canonical_lexical_matches():
+    index = _index([("cello cello notation", [0, 0, 1, 0]), ("unrelated unrelated text", [0, 0, 1, 0])])
+    retriever = HybridRetriever(index, FixedEmbedder({"violoncelo": [1, 0, 0, 0]}))
+    assert _ids(retriever.search(["violoncelo"], k=1)) == ["c0"]

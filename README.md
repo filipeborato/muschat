@@ -164,6 +164,16 @@ An eight-bar local test completed in about 33 seconds; time varies with instrume
 Version reuses the stored MusicXML unless you change the number of bars. Ask, for example: *"oito compassos de
 quarteto de cordas à maneira de Fauré, depois desloque o registro uma oitava acima"*.
 
+Pure composition turns skip corpus retrieval. Analyzer and planner context is limited to the most recent
+12 messages by default; `MUSCHAT_HISTORY_MESSAGES` changes this count (0 sends no previous messages).
+Stored conversation and composition history are retained.
+
+Optional: set `MUSCHAT_NOTAGEN_WORKER=1` to reuse loaded NotaGen weights across adjacent section calls.
+`MUSCHAT_NOTAGEN_IDLE_TIMEOUT=60` controls how many idle seconds the worker stays alive before releasing
+GPU memory. A stopped or unavailable worker falls back to ordinary per-call generation. It is disabled by default.
+The sidebar caches detected tools for the current configuration; use **Redetectar ferramentas** after installing
+or updating a tool. Export artifacts are cached per session by score content and transposition mode.
+
 Without an index the chat still works and says it is answering from general knowledge.
 
 `.env`:

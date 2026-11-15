@@ -12,7 +12,9 @@ from itertools import accumulate
 from typing import get_args
 from xml.parsers import expat
 
+from muschat.notation.spelling import spell_pitch as spell_pitch
 from muschat.instruments import instrument as get_instrument, transposition
+from muschat.notation.timeline import timeline, TimelineEvent
 from muschat.notation.techniques import TECHNIQUES, Technique, VoiceDirections, get_technique
 from muschat.score_ir import (
     PITCH_CLASS,
@@ -26,8 +28,6 @@ from muschat.score_ir import (
     ScoreIR,
     Tuplet,
     Voice,
-    spell_pitch,
-    ties_to,
 )
 
 __all__ = ["MAX_MUSICXML_BYTES", "from_musicxml", "spell_pitch", "to_musicxml"]
@@ -357,8 +357,8 @@ def _write_part(
 ) -> None:
     interval = transposition(part.instrument) if transposed else (0, 0, 0)
     voices = [v for v in part.voices if any(isinstance(e, (Note, Rest)) for e in v.events)]
-    writers = [_VoiceWriter(v, divisions, interval) for v in voices]
     offsets = list(accumulate((m.length for m in measures), initial=Fraction(0)))
+    writers = [_VoiceWriter(v, divisions, interval, offsets) for v in voices]
     for n, measure in enumerate(measures, 1):
         measure_el = _sub(el, "measure", number=str(n))
         _attributes(measure_el, measure, measures[n - 2] if n > 1 else None, part, divisions, interval)
@@ -375,30 +375,14 @@ def _write_part(
 class _VoiceWriter:
     """Write one voice measure-by-measure, maintaining active technique, dynamic, and glissando state."""
 
-    def __init__(self, voice: Voice, divisions: int, interval: tuple[int, int, int]):
+    def __init__(self, voice: Voice, divisions: int, interval: tuple[int, int, int], offsets: list[Fraction]):
         self.interval = interval
-        self.voice, self.divisions, self.directions, self.glissando_open = voice, divisions, VoiceDirections(), False
-        self.tie_open = False
-        self.events = [e for e in voice.events if isinstance(e, (Note, Rest))]
+        self.voice, self.divisions, self.directions = voice, divisions, VoiceDirections()
+        self.items = list(timeline(voice, offsets[:-1], offsets[-1]))
         self.i = 0
-        groups = {t.id: t for t in voice.tuplets}
-        self.chain: dict[str, list[str]] = {}
-        for t in voice.tuplets:
-            for event_id in t.events:
-                chain: list[str] = []
-                g: Tuplet | None = t
-                while g is not None:
-                    chain.insert(0, g.id)
-                    g = groups.get(g.parent) if g.parent else None
-                self.chain[event_id] = chain
-        members: dict[str, list[str]] = {}
-        for e in self.events:
-            for gid in self.chain.get(e.id, []):
-                members.setdefault(gid, []).append(e.id)
-        self.groups, self.members = groups, members
 
     def pending(self) -> list[str]:
-        return [e.id for e in self.events[self.i :]]
+        return [item.event.id for item in self.items[self.i:] if item.event is not None]
 
     def write(
         self,
@@ -410,21 +394,15 @@ class _VoiceWriter:
         *,
         polyphonic: bool,
     ) -> None:
-        cursor = start
         if number > 1 and end > start:
             _sub(_sub(measure_el, "backup"), "duration", str(self._div(end - start)))
-        while self.i < len(self.events) and self.events[self.i].start < end:
-            e = self.events[self.i]
-            if e.end > end:
-                raise ValueError(f"event {e.id} crosses the barline; split it with a tie")
-            if e.start > cursor:
-                _advance(measure_el, "forward", self._div(e.start - cursor), number)
-            next_ev = self.events[self.i + 1] if self.i + 1 < len(self.events) else None
-            self._write_event(measure_el, e, next_ev, number, accidentals)
-            cursor = e.end
+        while self.i < len(self.items) and self.items[self.i].start < end:
+            item = self.items[self.i]
+            if item.event is None:
+                _advance(measure_el, "forward", self._div(item.duration), number)
+            else:
+                self._write_event(measure_el, item, number, accidentals)
             self.i += 1
-        if polyphonic and cursor < end:
-            _advance(measure_el, "forward", self._div(end - cursor), number)
 
     def _div(self, t: Fraction) -> int:
         return int(t * 4 * self.divisions)
@@ -432,11 +410,12 @@ class _VoiceWriter:
     def _write_event(
         self,
         measure_el: ET.Element,
-        e: Note | Rest,
-        next_ev: Note | Rest | None,
+        item: TimelineEvent,
         number: int,
         accidentals: dict[tuple[str, int], Fraction],
     ) -> None:
+        e = item.event
+        assert e is not None
         techniques = [get_technique(t) for t in e.techniques] if isinstance(e, Note) else []
         italics, free_texts, dynamic = self.directions.next_event(techniques, isinstance(e, Note), e.text, e.dynamic)
         for text in italics:
@@ -445,15 +424,6 @@ class _VoiceWriter:
             _text_direction(measure_el, text)
         if dynamic:
             _dynamic(measure_el, dynamic)
-        opens_gliss = isinstance(e, Note) and e.glissando and isinstance(next_ev, Note)
-        chain = self.chain.get(e.id, [])
-        ratio = math.prod(
-            (Fraction(self.groups[g].numerator, self.groups[g].denominator) for g in chain),
-            start=Fraction(1),
-        )
-        tuplets = [(n, "start") for n, g in enumerate(chain, 1) if self.members[g][0] == e.id]
-        tuplets += [(n, "stop") for n, g in reversed(list(enumerate(chain, 1))) if self.members[g][-1] == e.id]
-        ties_to_next = isinstance(e, Note) and ties_to(e, next_ev)
         _write_note(
             measure_el,
             e,
@@ -461,14 +431,13 @@ class _VoiceWriter:
             interval=self.interval,
             number=number,
             duration=self._div(e.duration),
-            ratio=ratio,
-            tuplets=tuplets,
-            closes_glissando=self.glissando_open and isinstance(e, Note),
-            opens_glissando=opens_gliss,
+            ratio=item.ratio,
+            tuplets=list(item.tuplets),
+            closes_glissando=item.glissando_stop,
+            opens_glissando=item.glissando_start,
             accidentals=accidentals,
-            ties=[t for t, yes in (("stop", self.tie_open), ("start", ties_to_next)) if yes],
+            ties=[t for t, yes in (("stop", item.tie_stop), ("start", item.tie_start)) if yes],
         )
-        self.glissando_open, self.tie_open = opens_gliss, ties_to_next
 
 
 def _sub(parent: ET.Element, tag: str, text: str | None = None, **attrs) -> ET.Element:

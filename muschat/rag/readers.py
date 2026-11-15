@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from pypdf import PdfReader
+from muschat.instruments import identify, INSTRUMENTS
+import unicodedata
 
 MAX_SECTION_CHARS = 2000
 WINDOW_SIZE, WINDOW_OVERLAP = 1000, 200
@@ -47,7 +49,11 @@ FAMILIES = {
         "saxophon",
     ),
     "brass": ("brass", "metais", "ottoni", "tromba", "trompete", "trumpet", "corno", "horn", "trombone", "tuba"),
-    "piano": ("piano",),
+    "keyboard": ("keyboard", "teclado", "piano"),
+    "harp": ("harp", "harpa", "arpa"),
+    "guitar": ("guitar", "violao", "guitarra"),
+    "orchestra": ("orchestra", "orquestra"),
+    "chamber": ("chamber", "camara"),
     "percussion": ("percuss",),
     "voice": ("voice", "voz", "voce", "vocal", "soprano", "mezzo", "baritono", "baritone"),
     "electroacoustic": ("electroac", "eletroac", "elettronic", "electronic", "acusmat", "acousmat", "live electr"),
@@ -103,7 +109,11 @@ def _composer(folder: Path, root: Path) -> str:
 
 def family_of(*texts: str) -> str:
     """Instrumental family (`strings`, `woodwinds`, ...) by keyword; `""` if none matches."""
-    target = " ".join(texts).lower()
+    target = unicodedata.normalize("NFKD", " ".join(texts).lower()).encode("ascii", "ignore").decode()
+    try:
+        return INSTRUMENTS[identify(target)].family
+    except ValueError:
+        pass
     for family, keywords in FAMILIES.items():
         if any(kw in target for kw in keywords):
             return family
