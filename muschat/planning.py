@@ -256,6 +256,22 @@ def resolve_parameters(
     return {key: given.get(key, rng.default) for key, rng in proc.parameters.items()}
 
 
+def on_semitone_grid(procedure: str, values: dict[str, float]) -> dict[str, float]:
+    """Clamp pitch parameters of a non-microtonal plan to the 12-tone equal-tempered grid (100 midicents)."""
+    grid = dict(values)
+    for key in ("microtone", "resolution"):
+        if key in grid:
+            grid[key] = 0
+    if procedure == "detune" and grid["deviation"]:
+        grid["deviation"] = max(100, round(grid["deviation"] / 100) * 100)  # below a semitone it would be a no-op
+    elif procedure == "transpose":
+        grid["interval"] = round(grid["interval"] / 100) * 100
+    elif procedure == "distribute_by_constraints":
+        grid["base"] = round(grid["base"] / 100) * 100
+        grid["step"] = max(100, round(grid["step"] / 100) * 100)
+    return grid
+
+
 def validate_conditions(plan: Plan, steps: list[Step], registry: Registry) -> None:
     """Validate NotaGen condition strings against the available conditions before running any step."""
     cap = registry.capability("NotaGen")

@@ -13,8 +13,8 @@ class Recipe:
 
 RECIPES: dict[str, Recipe] = {
     "scelsi": Recipe(
-        "Microtonal pitch deviation and intra-gesture glissandos.",
-        (("detune", {"deviation": 100, "resolution": 2, "curve": 1, "glissandos": 0.7}),),
+        "Pitch deviation and intra-gesture glissandos (microtonal only when requested).",
+        (("detune", {"deviation": 100, "resolution": 0, "curve": 1, "glissandos": 0.7}),),
     ),
     "lachenmann": Recipe(
         "Pitches progressively yield to playable instrumental noise techniques.",
@@ -25,17 +25,17 @@ RECIPES: dict[str, Recipe] = {
         (("rarefy", {"keep": 0.3, "harmonics": 0.7, "dynamic": 0, "accents": 0.03}),),
     ),
     "ligeti": Recipe(
-        "Close canon with pitch spread and microtonal motion.",
+        "Close canon with pitch spread and slow pitch drift.",
         (
             ("micropolyphony", {"source_part": 1, "offset": 1, "variation": 0, "spread": 150}),
-            ("detune", {"deviation": 50, "resolution": 2, "curve": 0, "glissandos": 0}),
+            ("detune", {"deviation": 50, "resolution": 0, "curve": 0, "glissandos": 0}),
         ),
     ),
     "spectral": Recipe(
-        "Harmonic partials distributed by register, followed by microtonal drift.",
+        "Harmonic partials distributed by register, followed by pitch drift.",
         (
-            ("spectralize", {"fundamental": 3600, "partials": 16, "microtone": 1, "max_leap": 700}),
-            ("detune", {"deviation": 50, "resolution": 2, "curve": 0, "glissandos": 0.4}),
+            ("spectralize", {"fundamental": 3600, "partials": 16, "microtone": 0, "max_leap": 700}),
+            ("detune", {"deviation": 50, "resolution": 0, "curve": 0, "glissandos": 0.4}),
         ),
     ),
     "elastic_rhythm": Recipe(
@@ -87,7 +87,14 @@ def expand_recipe(plan: Plan) -> Plan:
         if existing:
             raise ValueError("partial recipe chain: provide the full chain or only the generation operation")
         chain = [
-            Operation(procedure=name, parameters=[Parameter(name=k, value=v) for k, v in params.items()])
+            Operation(
+                procedure=name,
+                parameters=[
+                    # Explicit microtonal requests reach the chain as quarter-tones; eighth-tones need the full chain.
+                    Parameter(name=k, value=1 if plan.microtonal and k in ("microtone", "resolution") else v)
+                    for k, v in params.items()
+                ],
+            )
             for name, params in recipe.chain
         ]
         operations = [*plan.operations, *chain]

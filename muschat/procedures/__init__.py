@@ -44,10 +44,10 @@ CATALOG: dict[str, Procedure] = {
     for p in [
         Procedure(
             "detune",
-            "Microtonal pitch deviation in a ramp or oscillation; intra-gesture glissandos without changing rhythm.",
+            "Pitch deviation in a ramp or oscillation (microtonal only when requested); intra-gesture glissandos without changing rhythm.",
             {
                 "deviation": RangeSpec(0, 200, 100, "maximum deviation", unit="cents"),
-                "resolution": RangeSpec(1, 2, 1, "1 = quarter-tone, 2 = eighth-tone"),
+                "resolution": RangeSpec(0, 2, 0, "0 = semitone, 1 = quarter-tone, 2 = eighth-tone"),
                 "curve": RangeSpec(0, 1, 0, "0 = ramp, 1 = full sine oscillation"),
                 "glissandos": RangeSpec(0, 1, 0.5, "ratio of intra-gesture glissando links", integer=False),
             },
@@ -76,7 +76,7 @@ CATALOG: dict[str, Procedure] = {
         ),
         Procedure(
             "micropolyphony",
-            "Close canon from the first voice of the source part across selected voices with offset, duration variation, and microtonal spread.",
+            "Close canon from the first voice of the source part across selected voices with offset, duration variation, and pitch spread.",
             {
                 "source_part": RangeSpec(1, 16, 1, "1-based index of the source part"),
                 "offset": RangeSpec(0, 8, 1, "entry delay per voice", unit="sixteenths"),
@@ -103,7 +103,7 @@ CATALOG: dict[str, Procedure] = {
                 "fundamental": RangeSpec(2400, 6000, 3600, "fundamental", unit="midicents (3600 = C2, 6000 = C4)"),
                 "partials": RangeSpec(2, 32, 16, "number of partials (1..n)"),
                 "measures": RangeSpec(1, 32, 8, "number of 4/4 measures"),
-                "microtone": RangeSpec(0, 2, 1, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
+                "microtone": RangeSpec(0, 2, 0, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
                 "rests": RangeSpec(0, 0.9, 0.15, "rest ratio", integer=False),
             },
             generation.harmonic_series,
@@ -124,7 +124,7 @@ CATALOG: dict[str, Procedure] = {
             {
                 "fundamental": RangeSpec(2400, 6000, 3600, "fundamental", unit="midicents (3600 = C2, 6000 = C4)"),
                 "partials": RangeSpec(2, 32, 16, "number of partials (1..n)"),
-                "microtone": RangeSpec(0, 2, 1, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
+                "microtone": RangeSpec(0, 2, 0, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
                 "max_leap": RangeSpec(100, 2400, 1200, "maximum interval between consecutive notes", unit="cents"),
             },
             spectral.spectralize,
@@ -155,7 +155,7 @@ CATALOG: dict[str, Procedure] = {
         ),
         Procedure(
             "scale_intervals",
-            "Compress (<1) or expand (>1) melodic intervals relative to the first pitch of each voice in quarter-tones.",
+            "Compress (<1) or expand (>1) melodic intervals relative to the first pitch of each voice.",
             {"factor": RangeSpec(0.25, 4, 1, "interval scaling factor", integer=False)},
             melodic.scale_intervals,
         ),
@@ -227,7 +227,7 @@ CATALOG: dict[str, Procedure] = {
             "Create instrumental parts from spectral analysis data in the score (e.g. OM-SuperVP).",
             {
                 "pitches_per_frame": RangeSpec(1, 8, 4, "strongest partials per frame"),
-                "microtone": RangeSpec(0, 2, 1, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
+                "microtone": RangeSpec(0, 2, 0, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
             },
             spectral.events_from_spectrum,
         ),
@@ -287,7 +287,7 @@ CATALOG: dict[str, Procedure] = {
             {
                 "fundamental": RangeSpec(2400, 6000, 3600, "fundamental", unit="midicents (3600 = C2)"),
                 "partials": RangeSpec(2, 32, 16, "number of partials (1..n)"),
-                "microtone": RangeSpec(0, 2, 1, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
+                "microtone": RangeSpec(0, 2, 0, "quantization: 0 semitone, 1 quarter-tone, 2 eighth-tone"),
                 "max_leap": RangeSpec(100, 2400, 700, "maximum melodic leap per voice", unit="cents"),
                 "no_unison": RangeSpec(0, 2, 1, "distinct simultaneous pitches: 0 off, 1 preference, 2 strict"),
                 "no_voice_crossing": RangeSpec(0, 2, 1, "upper part above lower part: 0 off, 1 preference, 2 strict"),

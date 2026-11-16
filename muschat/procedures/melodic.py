@@ -29,6 +29,8 @@ def transpose(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: ran
 def invert(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random) -> ScoreIR:
     def mirror(seq: Sequence) -> Sequence:
         axis = int(p["axis"]) or seq[0][0]
+        if not plan.microtonal:
+            axis = round(axis / 50) * 50  # mirroring around a quarter-tone axis keeps semitones on semitones
         return [[2 * axis - a for a in chord] for chord in seq]
 
     return _over_sequence(current, plan, mirror)
@@ -49,6 +51,6 @@ def rotate(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random
 def scale_intervals(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random) -> ScoreIR:
     def scale(seq: Sequence) -> Sequence:
         base = seq[0][0]
-        return [[base + quantize((a - base) * p["factor"], 1) for a in chord] for chord in seq]
+        return [[base + quantize((a - base) * p["factor"], plan.grid(1)) for a in chord] for chord in seq]
 
     return _over_sequence(current, plan, scale)

@@ -8,6 +8,11 @@ compositores. O plano registra a receita e sua hipótese; os parâmetros continu
 A tabela em `muschat/recipes.py` alimenta o prompt e gera a documentação com `uv run python -m muschat.recipes`.
 Scelsi explora desvios e glissandos; Lachenmann, ruído instrumental; Sciarrino, silêncio e harmônicos;
 Ligeti, cânones próximos; espectral, parciais; ritmo elástico, quiálteras e respirações.
+
+**Alturas temperadas por padrão.** Alturas novas ou transformadas ficam em semitons; microtons só entram quando o
+pedido os menciona explicitamente (microtons, quartos/oitavos de tom, ou desvio em cents fora de múltiplos de 100).
+Pedir música espectral, técnicas estendidas ou uma receita não basta. Material microtonal já existente fora da edição
+é preservado, e experimentos salvos antes dessa regra são reaplicados com o comportamento registrado.
 Gere as 24 comparações sobre as quatro peças de referência com
 `uv run python -m muschat.references contemporary-layer --recipes` (MusicXML, JSON, métricas e PDF com LilyPond).
 

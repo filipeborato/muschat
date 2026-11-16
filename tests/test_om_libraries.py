@@ -300,7 +300,7 @@ def _measure_notes(ir: ScoreIR, part: int, n: int) -> list[Note]:
 
 def test_chaotic_register_shifts_each_measure_by_series_value(tmp_path):
     before, after = _run_chaos(tmp_path, "chaotic_register", {"min_value": 0, "max_value": 1200})
-    for n, shift in [(1, 0), (2, 350), (3, 1150), (4, 1200)]:
+    for n, shift in [(1, 0), (2, 300), (3, 1200), (4, 1200)]:  # series ~349/~1150 snapped to semitones
         a = [x.pitches[0].midicents for x in _measure_notes(before, 3, n)]
         d = [x.pitches[0].midicents for x in _measure_notes(after, 3, n)]
         assert d == [x + shift for x in a]
@@ -412,7 +412,7 @@ def _cluster_task(tmp_path, current=None, **overrides):
 
 
 def test_cluster_engine_input_encodes_fixed_rhythm_summed_tie_and_range_domain(tmp_path):
-    task, _, _ = _cluster_task(tmp_path)
+    task, _, _ = _cluster_task(tmp_path, microtone=1)
     spectrum = partials(3600, 16, 1)
     violin = [a for a in spectrum if 5500 <= a <= 10300]
     cello = [a for a in spectrum if 3600 <= a <= 8100]
@@ -480,7 +480,7 @@ def test_cluster_engine_chord_tracks_lead_pitch_within_partials(tmp_path):
 def test_real_cluster_engine_evidence_imports_onto_notagen_material():
     evid = Path("docs/pesquisa/evidencias-openmusic")
     material = ScoreIR.model_validate_json((evid / "cluster-engine-material.json").read_text(encoding="utf-8"))
-    base = _complete_params("pitches_by_constraints", {"common_tones": 1})
+    base = _complete_params("pitches_by_constraints", {"common_tones": 1, "microtone": 1})  # recorded quarter-tone run
     plan = Plan(goal="v", operations=[Operation(procedure="pitches_by_constraints")])
     input_text = PATCHES["pitches_by_constraints"].build_input(base, material, plan)
     assert input_text == (evid / "cluster-engine-entrada.txt").read_text(encoding="utf-8")

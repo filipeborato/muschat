@@ -101,7 +101,7 @@ def test_scale_intervals_scales_distance_from_first_pitch(quartet):
     sel = Selection(parts=["P4"])
     scaled = _run("scale_intervals", quartet, selection=sel, factor=0.5)
     base = _pitches(quartet, "P4")[0][0]
-    expected = [base + round((a - base) / 2 / 50) * 50 for [a] in _pitches(quartet, "P4")]
+    expected = [base + round((a - base) / 2 / 100) * 100 for [a] in _pitches(quartet, "P4")]
     assert [a for [a] in _pitches(scaled, "P4")] == expected
     assert _pitches(scaled, "P1") == _pitches(quartet, "P1")
 

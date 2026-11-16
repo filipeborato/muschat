@@ -119,11 +119,11 @@ def test_notagen_generates_external_version_with_plan_instruments(tmp_path):
 
 
 def test_notagen_material_flows_into_python_transformations(tmp_path):
-    transpose_op = {"procedure": "transpose", "parameters": [{"name": "interval", "value": 50}]}
+    transpose_op = {"procedure": "transpose", "parameters": [{"name": "interval", "value": 100}]}
     _, result = _generate(tmp_path, FakeComposer(), transpose_op)
     assert result.version is not None
     assert [s["engine"] for s in result.version.experiment["steps"]] == ["notagen", "python"]
-    assert result.version.ir.parts[0].voices[0].events[0].pitches[0].midicents == 6050
+    assert result.version.ir.parts[0].voices[0].events[0].pitches[0].midicents == 6100
 
 
 def test_notagen_mode_requires_local_call_and_executes_transformation(tmp_path):
@@ -131,7 +131,7 @@ def test_notagen_mode_requires_local_call_and_executes_transformation(tmp_path):
     fake = FakeComposer()
     plan = _plan("generate_notagen", parameters={"measures": 2}, instruments=["violin", "cello"])
     plan["operations"][0]["condition"] = CONDITIONS[0]
-    plan["operations"].append({"procedure": "transpose", "parameters": [{"name": "interval", "value": 50}]})
+    plan["operations"].append({"procedure": "transpose", "parameters": [{"name": "interval", "value": 100}]})
     comp = Composition()
     gen = FakeGenerator(plan)
     result = compose(

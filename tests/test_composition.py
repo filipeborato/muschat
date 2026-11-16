@@ -431,7 +431,7 @@ def test_composition_survives_score_schema_reload():
         importlib.reload(preservation)
         importlib.reload(execution)
         importlib.reload(orchestrator)
-        result = orchestrator.compose('transpose', c, generator=FakeGenerator(_plan('transpose', {'interval': 50})), chat=FakeChat(), model='m')
+        result = orchestrator.compose('transpose a quarter-tone', c, generator=FakeGenerator(_plan('transpose', {'interval': 50})), chat=FakeChat(), model='m')
         assert result.version is not None, result.summary
         assert len(c.versions) == 2
         before = c.versions[0].ir.parts[0].voices[0].events[0].pitches[0].midicents

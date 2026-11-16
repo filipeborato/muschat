@@ -150,6 +150,7 @@ that choice and record hypotheses. Do not impose an aesthetic recipe when the re
 gestural_techniques before timbral_substitution to preserve the noise curve. Those two operations by themselves \
 preserve the source rhythm and rests; do not describe polyphony or rhythmic transformation that was not executed.
 - seed: only if the user explicitly requests a specific seed.
+- Pitch grid: keep pitches on the 12-tone equal-tempered grid (microtone = 0, detune resolution = 0, transpositions and offsets in multiples of 100 cents) unless the user explicitly requests microtones, quarter-tones, eighth-tones, or a non-semitone offset in cents. Contemporary, spectral, or extended-technique requests and aesthetic references do not by themselves authorize microtones. When microtones are requested with a recipe, provide its full chain with the requested resolution.
 - Subjective aesthetic request ("more fragmented", "less predictable"): translate into concrete operations and \
 parameters and record the adopted translation in hypotheses, including numbers (e.g., "fragmented = density from 1 \
 to 3 attacks per quarter note and more rests in measures 7–8"). The composer sees and adjusts those numbers.

@@ -60,7 +60,7 @@ def micropolyphony(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng
         k = destinations.index((part.id, voice.id))
         delay = F(int(p["offset"]) * k, 16)
         factor = F(16 + rng.randint(-int(p["variation"]), int(p["variation"])), 16)
-        shift = quantize((k / max(len(destinations) - 1, 1) - 0.5) * p["spread"], 2)
+        shift = quantize((k / max(len(destinations) - 1, 1) - 0.5) * p["spread"], plan.grid(2))
         output: list[Event] = []
         cursor = start_pos
         for e in events:

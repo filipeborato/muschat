@@ -35,7 +35,7 @@ OPEN_STRINGS: dict[str, tuple[int, ...]] = {
 
 def detune(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random) -> ScoreIR:
     current = require_score(current)
-    microtone = 1 if p["resolution"] == 1 else 2
+    microtone = int(p["resolution"])
     step = quantization_step(microtone)
     amplitude = math.floor(p["deviation"] / step) * step
 
@@ -166,7 +166,7 @@ def rarefy(current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random
                     if strings:
                         # shortcut: standard tuning, partials 2–8; extend for scordatura when string model exists.
                         naturals = sorted(
-                            {pitch for c in strings for pitch in partials(c, 8, 2)[1:]}
+                            {pitch for c in strings for pitch in partials(c, 8, plan.grid(2))[1:]}
                         )
                         candidates = [
                             copy.model_copy(update={"pitches": [Pitch(midicents=a)], "techniques": ["harmonic"]})

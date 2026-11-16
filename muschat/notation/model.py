@@ -6,6 +6,8 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field, model_validator
 
+from muschat.spectrum import quantize
+
 from muschat.score_ir import (
     PITCH_CLASS,
     Clef,
@@ -139,7 +141,7 @@ def parse_pitch(text: str) -> Pitch | None:
     return Pitch(midicents=midicents, spelling=cast(PitchLetter, letter)) if 0 <= midicents <= 12700 else None
 
 
-def to_score_ir(example: ScoreExample, provenance: Provenance | None = None) -> ScoreIR:
+def to_score_ir(example: ScoreExample, provenance: Provenance | None = None, *, microtonal: bool = True) -> ScoreIR:
     """Convert an illustrative `ScoreExample` into a single-part, single-voice `ScoreIR` (`P1`, `P1V1`, `P1V1E1`...)."""
     prov = provenance or Provenance(source="llm")
     num_text, _, den_text = example.meter.partition("/")
@@ -154,6 +156,8 @@ def to_score_ir(example: ScoreExample, provenance: Provenance | None = None) -> 
         for note in m.notes:
             duration = _FIGURE[note.duration] * (Fraction(3, 2) if note.dotted else 1)
             pitches = [p for p in map(parse_pitch, note.pitches) if p is not None]
+            if not microtonal:
+                pitches = [p if p.midicents % 100 == 0 else Pitch(midicents=quantize(p.midicents, 0)) for p in pitches]
             eid = f"P1V1E{len(events) + 1}"
             if pitches:
                 events.append(

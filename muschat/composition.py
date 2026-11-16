@@ -34,10 +34,17 @@ from muschat.score_ir import (
 _REVERSE_PROCEDURE_ALIASES: dict[str, str] = {v: k for k, v in PROCEDURE_ALIASES.items()}
 
 
+def keep_legacy_pitch_policy(plan: object) -> object:
+    """Plans saved before the semitone default replay with their recorded (microtonal) behavior."""
+    if isinstance(plan, dict) and "microtonal" not in plan:
+        return {**plan, "microtonal": True}
+    return plan
+
+
 def migrate_legacy_plan_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """Convert a legacy Portuguese `Plano` dictionary into the canonical English `Plan` dictionary shape."""
     if "goal" in raw and "operations" in raw:
-        return raw
+        return keep_legacy_pitch_policy(raw)  # type: ignore[return-value]
     sel = raw.get("selection", raw.get("selecao", {})) or {}
     norm_sel = {
         "parts": sel.get("parts", sel.get("partes", [])),
@@ -99,6 +106,7 @@ def migrate_legacy_plan_dict(raw: dict[str, Any]) -> dict[str, Any]:
         "mode": normalize_mode(raw.get("mode", raw.get("motor", "auto"))),
         "criteria": raw.get("criteria", raw.get("criterios", [])),
         "seed": raw.get("seed", raw.get("semente")),
+        "microtonal": True,
     }
 
 
@@ -338,8 +346,10 @@ class PendingTask(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _migrate_legacy(cls, data: object) -> object:
-        if not isinstance(data, dict) or ("prompt" in data and "decision" in data and "step" in data):
+        if not isinstance(data, dict):
             return data
+        if "prompt" in data and "decision" in data and "step" in data:
+            return {**data, "plan": keep_legacy_pitch_policy(data.get("plan"))}
         raw_plan = data.get("plan", data.get("plano", {}))
         plan_dict = migrate_legacy_plan_dict(raw_plan) if isinstance(raw_plan, dict) else raw_plan
         raw_dec = data.get("decision", data.get("decisao", {}))

@@ -367,7 +367,7 @@ def test_hybrid_pauses_at_openmusic_and_resume_finishes_remaining_steps(tmp_path
     assert len(v.experiment["intermediates"]) == 3
     assert v.experiment["intermediates"][0]["parts"][0]["instrument"] == "Spectral material"
     used = {p.midicents % 1200 for _, _, e in v.ir.events() if hasattr(e, "pitches") for p in e.pitches}
-    spectrum = {round(int(x) / 50) * 50 % 1200 for x in OUTPUT_16.strip("()").split()}
+    spectrum = {round(int(x) / 100) * 100 % 1200 for x in OUTPUT_16.strip("()").split()}
     assert used <= spectrum
     assert {e.provenance.source for _, _, e in v.ir.events()} == {"algorithm"}
 

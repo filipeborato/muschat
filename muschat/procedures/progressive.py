@@ -128,7 +128,7 @@ def density_by_measure(
 def progressive_register(
     current: ScoreIR | None, plan: Plan, p: dict[str, float], rng: random.Random
 ) -> ScoreIR:
-    """Shift pitches by a linear ramp in cents from start to end of the span (quantized to quarter-tones)."""
+    """Shift pitches by a linear ramp in cents from start to end of the span (quarter-tones only in a microtonal plan)."""
     current = require_score(current)
     grid = MeasureGrid(current)
     first, last = grid.span(plan.selection)
@@ -139,7 +139,7 @@ def progressive_register(
 
         def shift(e: Note) -> Note:
             t = float((e.start - start_pos) / (last_attack - start_pos)) if last_attack > start_pos else 0.0
-            n = quantize(p["start"] + (p["end"] - p["start"]) * t, 1)
+            n = quantize(p["start"] + (p["end"] - p["start"]) * t, plan.grid(1))
             return with_pitches(e, [a.midicents + n for a in e.pitches])
 
         return [shift(e) if isinstance(e, Note) else e for e in target]

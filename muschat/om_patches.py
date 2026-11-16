@@ -153,12 +153,12 @@ def _series_output(values: list[float], ctx: PatchContext) -> ScoreIR:
     if out_of_bounds := [v for v in values if not 0 <= v <= 12700]:
         raise ValueError(f"values outside 0–12700 midicents: {out_of_bounds[:5]}")
     score = material_score(
-        [quantize(v, int(ctx.parameters.get("microtone", 1))) for v in values],
+        [quantize(v, int(ctx.parameters.get("microtone", 0))) for v in values],
         title=f"Harmonic series on {ctx.parameters['fundamental']:.0f} mc (OpenMusic)",
         provenance=ctx.provenance,
     )
     letters = partial_spellings(
-        ctx.parameters["fundamental"], len(values), int(ctx.parameters.get("microtone", 1))
+        ctx.parameters["fundamental"], len(values), int(ctx.parameters.get("microtone", 0))
     )
     spellings = iter(letters)
     return score.model_copy(update={"parts": [p.model_copy(update={"voices": [
@@ -212,7 +212,7 @@ def _apply_chaos_density(base: ScoreIR, plan: Plan, target: TargetFn, rng: rando
 
 def _apply_chaos_register(base: ScoreIR, plan: Plan, target: TargetFn, _rng: random.Random) -> ScoreIR:
     def transform_measure(part: Part, voice: Voice, group: list[Event], n: int) -> list[Event]:
-        shift = quantize(target(n), 1)
+        shift = quantize(target(n), plan.grid(1))
         return [
             with_pitches(e, [a.midicents + shift for a in e.pitches]) if isinstance(e, Note) else e
             for e in group

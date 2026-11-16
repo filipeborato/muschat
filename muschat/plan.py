@@ -1,5 +1,6 @@
 """Compositional plan: structured schema returned by the planner before any procedure executes."""
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -107,6 +108,23 @@ RECIPE_ALIASES: dict[str, str] = {
     "espectral": "spectral",
     "ritmo_elastico": "elastic_rhythm",
 }
+
+
+# User boundary: free-form PT/EN request text.
+_MICROTONAL_TERMS = re.compile(
+    r"micro-?to[nm]|quarter[- ]?tones?|eighth[- ]?tones?|(quartos?|oitavos?) de tom|1/[48][- ]?(de )?(tom|tone)"
+    r"|half[- ](sharp|flat)|\bedo\b|\d+[.,]\d*[1-9]\s*semit",
+    re.IGNORECASE,
+)
+_NEGATED = re.compile(r"\b(without|no|not|never|avoid|sem|nada de|n[aã]o|evite)\b(\W+\w+)?\W*$", re.IGNORECASE)
+_CENTS = re.compile(r"(\d+)\s*cents?\b", re.IGNORECASE)
+
+
+def requests_microtones(text: str) -> bool:
+    """Explicit microtonal intent: microtones, quarter/eighth-tones, or a non-semitone offset in cents."""
+    # shortcut: negation checks one word back only, so long negated clauses slip through; ask the planner LLM if needed.
+    terms = [m for m in _MICROTONAL_TERMS.finditer(text) if not _NEGATED.search(text[: m.start()])]
+    return bool(terms) or any(int(n) % 100 for n in _CENTS.findall(text))
 
 
 def normalize_mode(value: str) -> Mode:
@@ -231,6 +249,10 @@ class Plan(BaseModel):
     )
     criteria: list[str] = Field(default_factory=list, description="Validation criteria for the result.")
     seed: int | None = Field(default=None, description="Only set when the user requests reproducing a specific seed.")
+    microtonal: bool = Field(
+        default=False,
+        description="Set by the application from the request text (explicit microtones); otherwise pitches stay on semitones.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -257,6 +279,10 @@ class Plan(BaseModel):
         if any(a.end_measure >= b.start_measure for a, b in zip(ordered, ordered[1:])):
             raise ValueError("overlapping sections")
         return self
+
+    def grid(self, microtone: int) -> int:
+        """Quantization for a pitch-changing step: the requested microtone, or semitones (0) unless microtonal."""
+        return microtone if self.microtonal else 0
 
     def for_step(self, index: int) -> "Plan":
         name = self.operations[index].section

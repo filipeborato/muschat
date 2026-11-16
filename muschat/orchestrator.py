@@ -21,6 +21,7 @@ from muschat.execution import StepCompleted, StepPaused, execute_step
 from muschat.errors import RefusalError
 from muschat.planning import (
     plan_composition,
+    on_semitone_grid,
     resolve_parameters,
     validate_conditions,
     normalize_plan,
@@ -33,7 +34,7 @@ from muschat.notagen import ComposerBackend
 from muschat.notation.musicxml import from_musicxml, to_musicxml
 from muschat.notation.techniques import unplayable_techniques
 from muschat.openmusic import TASKS_DIR, OmTask
-from muschat.plan import Parameter, Plan
+from muschat.plan import Parameter, Plan, requests_microtones
 from muschat.procedures import CATALOG, Procedure
 from muschat.registry import ENGINE_NAME, Registry
 from muschat.router import MODES, Mode, NoRouteError, route
@@ -102,6 +103,8 @@ def compose(
             sections=plan_sections,
             history_messages=history_messages,
         )
+        # shortcut: intent read from this request only, so follow-ups must restate microtones; carry it from history if needed.
+        plan = plan.model_copy(update={"microtonal": requests_microtones(request)})
     except (RefusalError, ValueError) as exc:
         return _refusal(exc)
     return _apply_plan(
@@ -328,7 +331,8 @@ def _apply_plan(
                         ]
                     }
                 )
-            parameters.append(resolve_parameters(op, catalog, exists))
+            values = resolve_parameters(op, catalog, exists)
+            parameters.append(values if plan.microtonal else on_semitone_grid(op.procedure, values))
             exists = exists or not catalog[op.procedure].requires_score
         for k in range(len(plan.operations)):
             try:

@@ -18,6 +18,7 @@ from muschat.notation.model import ScoreExample, to_score_ir
 from muschat.notation.musicxml import to_musicxml
 from muschat.notation.techniques import TECHNIQUES
 from muschat.orchestrator import compose, resume, summarize_score
+from muschat.plan import requests_microtones
 from muschat.registry import Registry
 from muschat.router import Mode
 from muschat.score_ir import ScoreIR
@@ -289,7 +290,8 @@ def _generate_score(
     example.measures = example.measures[:MAX_GENERATED_MEASURES]
     if not example.measures:
         return None
-    return ScoreView(example.title, to_musicxml(to_score_ir(example)), GENERATED_CAPTION, "generated")
+    ir = to_score_ir(example, microtonal=requests_microtones(question))
+    return ScoreView(example.title, to_musicxml(ir), GENERATED_CAPTION, "generated")
 
 
 def _analyze(question: str, *, generator: Generator, chat: ChatSession, model: str, history_messages: int = DEFAULT_HISTORY_MESSAGES) -> Analysis:
