@@ -3,6 +3,7 @@ name = "muschat"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "abjad>=3.31",
     "google-genai>=3.0.0",
     "httpx2>=2.16.0",
     "numpy>=2.5.4",
